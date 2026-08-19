@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# agent-wt — git worktrees for delegate-kit writers, with a write-lock that agent-run honours.
+# Worktrees live next to the repo: <repo-parent>/<repo-name>.worktrees/<name>, branch dk/<name>.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+agent-wt create <name> [--base REF]   create worktree + branch dk/<name> (default base: current HEAD)
+agent-wt list                         list worktrees with lock/owner/status
+agent-wt status <name>                path, branch, lock, dirty files, commits ahead of base
+agent-wt diff <name> [--base REF]     frozen diff: base..HEAD plus uncommitted changes
+agent-wt release <name>               remove the write-lock (only if its process is gone or --force)
+agent-wt remove <name> [--force]      remove worktree and branch (refuses if locked or dirty unless --force)
+agent-wt cleanup                      remove worktrees whose branch is merged into the base and are unlocked
+EOF
+}
+
+die() { echo "agent-wt: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
+need git; need jq
+
+repo_root() { git rev-parse --show-toplevel 2>/dev/null || die "not inside a git repository"; }
+main_root() {
+  # resolve the main checkout even when called from inside a linked worktree
+  local common; common=$(git rev-parse --git-common-dir); common=$(cd "$common" && pwd)
+  dirname "$common"
+}
+wt_base_dir() { local r; r=$(main_root); echo "$(dirname "$r")/$(basename "$r").worktrees"; }
+wt_path() { echo "$(wt_base_dir)/$1"; }
+wt_branch() { echo "dk/$1"; }
+lock_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(cd "$p" && git rev-parse --absolute-git-dir)/delegate-kit.lock"; }
+base_ref_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(cd "$p" && git rev-parse --absolute-git-dir)/delegate-kit.base"; }
+
+lock_info() {
+  local lf; lf=$(lock_file "$1" 2>/dev/null) || { echo "no-lock"; return; }
+  [ -f "$lf" ] || { echo "unlocked"; return; }
+  local pid; pid=$(jq -r '.pid // empty' "$lf")
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "locked(run=$(jq -r .id "$lf"), pid=$pid)"; else echo "stale-lock(run=$(jq -r .id "$lf"))"; fi
+}
+
+cmd_create() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
+  local base="HEAD"
+  while [ $# -gt 0 ]; do case "$1" in --base) base=$2; shift 2;; *) die "unknown option $1";; esac; done
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "name must match [A-Za-z0-9._-]+"
+  local path branch; path=$(wt_path "$name"); branch=$(wt_branch "$name")
+  [ -e "$path" ] && die "worktree already exists: $path"
+  mkdir -p "$(dirname "$path")"
+  local base_sha; base_sha=$(git rev-parse --verify "$base^{commit}") || die "bad base ref: $base"
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    git worktree add "$path" "$branch" >/dev/null
+  else
+    git worktree add -b "$branch" "$path" "$base_sha" >/dev/null
+  fi
+  echo "$base_sha" > "$(base_ref_file "$name")"
+  jq -n --arg name "$name" --arg path "$path" --arg branch "$branch" --arg base "$base_sha" '{name:$name,path:$path,branch:$branch,base:$base}'
+}
+
+cmd_list() {
+  local base; base=$(wt_base_dir)
+  [ -d "$base" ] || { echo "[]"; return; }
+  local out="[]"
+  for p in "$base"/*/; do
+    [ -d "$p" ] || continue
+    local name; name=$(basename "$p")
+    local branch dirty lock
+    branch=$(cd "$p" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+    dirty=$(cd "$p" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    lock=$(lock_info "$name")
+    out=$(jq --arg n "$name" --arg p "$p" --arg b "$branch" --arg d "$dirty" --arg l "$lock" '. + [{name:$n,path:$p,branch:$b,dirty:($d|tonumber),lock:$l}]' <<<"$out")
+  done
+  echo "$out"
+}
+
+cmd_status() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"
+  local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name"
+  local base; base=$(cat "$(base_ref_file "$name")" 2>/dev/null || echo "")
+  local ahead=0; [ -n "$base" ] && ahead=$(cd "$p" && git rev-list --count "$base..HEAD")
+  jq -n --arg n "$name" --arg p "$p" --arg b "$(cd "$p" && git rev-parse --abbrev-ref HEAD)" --arg base "$base" \
+    --arg l "$(lock_info "$name")" --arg d "$(cd "$p" && git status --porcelain | wc -l | tr -d ' ')" --arg a "$ahead" \
+    '{name:$n,path:$p,branch:$b,base:$base,lock:$l,dirty:($d|tonumber),commits_ahead:($a|tonumber)}'
+}
+
+cmd_diff() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
+  local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name"
+  local base; base=$(cat "$(base_ref_file "$name")" 2>/dev/null || echo "")
+  while [ $# -gt 0 ]; do case "$1" in --base) base=$2; shift 2;; *) die "unknown option $1";; esac; done
+  [ -n "$base" ] || die "no base recorded; pass --base REF"
+  (cd "$p" && git add -N . >/dev/null 2>&1 || true; git diff "$base")
+}
+
+cmd_release() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
+  local force=0; [ "${1:-}" = "--force" ] && force=1
+  local lf; lf=$(lock_file "$name") || die "no such worktree: $name"
+  [ -f "$lf" ] || { echo "already unlocked"; return; }
+  local pid; pid=$(jq -r '.pid // empty' "$lf")
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ $force -eq 0 ]; then die "lock held by live process $pid; use --force after stopping the worker (agent-run kill <id>)"; fi
+  rm -f "$lf"; echo "released"
+}
+
+cmd_remove() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
+  local force=0; [ "${1:-}" = "--force" ] && force=1
+  local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name"
+  local lock; lock=$(lock_info "$name")
+  [[ "$lock" == locked* ]] && [ $force -eq 0 ] && die "worktree is $lock; stop the worker first"
+  local dirty; dirty=$(cd "$p" && git status --porcelain | wc -l | tr -d ' ')
+  [ "$dirty" != "0" ] && [ $force -eq 0 ] && die "worktree has $dirty uncommitted changes; commit/stash or use --force"
+  git worktree remove ${force:+--force} "$p"
+  git branch -D "$(wt_branch "$name")" >/dev/null 2>&1 && echo "removed worktree and branch dk/$name" || echo "removed worktree (branch kept or absent)"
+}
+
+cmd_cleanup() {
+  local base; base=$(wt_base_dir); [ -d "$base" ] || { echo "nothing to clean"; return; }
+  local head; head=$(git rev-parse HEAD)
+  for p in "$base"/*/; do
+    [ -d "$p" ] || continue
+    local name; name=$(basename "$p")
+    local lock; lock=$(lock_info "$name"); [[ "$lock" == locked* ]] && { echo "skip $name: $lock"; continue; }
+    local br; br=$(wt_branch "$name")
+    if git merge-base --is-ancestor "$br" "$head" 2>/dev/null; then
+      local dirty; dirty=$(cd "$p" && git status --porcelain | wc -l | tr -d ' ')
+      [ "$dirty" != "0" ] && { echo "skip $name: dirty"; continue; }
+      git worktree remove "$p" && git branch -d "$br" >/dev/null && echo "removed $name (merged)"
+    else
+      echo "keep $name: not merged"
+    fi
+  done
+  git worktree prune
+}
+
+case "${1:-}" in
+  create) shift; cmd_create "$@";;
+  list) cmd_list;;
+  status) shift; cmd_status "$@";;
+  diff) shift; cmd_diff "$@";;
+  release) shift; cmd_release "$@";;
+  remove) shift; cmd_remove "$@";;
+  cleanup) cmd_cleanup;;
+  *) usage; exit 1;;
+esac
