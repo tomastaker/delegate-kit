@@ -73,12 +73,13 @@ A worker cannot talk to the user. If it needs an answer it returns `status: bloc
 - Writers run in a worktree with the backend's own sandbox (`codex -s workspace-write`, `claude --permission-mode acceptEdits`). Never `bypassPermissions` or `danger-full-access`.
 - Reviewers, planners, verifiers, researchers are read-only (`codex -s read-only`, `claude --permission-mode plan`).
 - `hooks/gate.sh` makes dangerous shell commands require the user's confirmation in the parent (Claude: approval prompt; Codex: denied with instructions to confirm and re-run with the `DELEGATE_KIT_CONFIRMED=1` prefix).
-- The ledger `~/.delegate-kit/ledger.jsonl` records model, effort, tokens, duration and outcome per run. Look at it before changing the default matrix.
+- **Quota fallback.** If a backend answers with a usage/rate limit, `agent-run` retries the same brief once on the other vendor with that vendor's default model for the role, and marks the result with `fallback_from`. For reviewer/verifier this can put the review on the author's vendor — the result carries a note; say so in your report or re-run later. Disable with `--fallback none`. Resumes never fall back (the session lives on one vendor).
+- The ledger `~/.delegate-kit/ledger.jsonl` records model, effort, tokens, duration, outcome and fallbacks per run. Look at it before changing the default matrix.
 
 ## Commands
 
 ```
-agent-run run --role <planner|implementer|reviewer|verifier|researcher> [--backend claude|codex] [--model M] [--effort E] [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN]
+agent-run run --role <planner|implementer|reviewer|verifier|researcher> [--backend claude|codex] [--model M] [--effort E] [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--fallback auto|none]
 agent-run resume <id> (--brief FILE | --prompt TEXT)
 agent-run list | status <id> | wait <id> | log <id> | kill <id>
 agent-wt create <name> [--base REF] | list | status <name> | diff <name> | release <name> | remove <name> | cleanup

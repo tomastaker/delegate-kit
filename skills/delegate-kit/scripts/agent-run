@@ -89,6 +89,13 @@ function releaseWriteLock(cwd, id) {
   if (existing && existing.id === id) fs.rmSync(lp, { force: true });
 }
 
+const QUOTA_RE = /usage limit|rate limit|limit reached|out of (extra )?usage|quota|too many requests|overloaded|429/i;
+const isQuotaError = (m, stderr) => {
+  const txt = [m?.result?.summary, stderr].filter(Boolean).join("\n");
+  return (m?.status === "failed" || m?.workerStatus === "failed") && QUOTA_RE.test(txt);
+};
+const otherBackend = (b) => (b === "claude" ? "codex" : "claude");
+
 // ---------- command builders ----------
 function buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId }) {
   if (backend === "claude") {
@@ -192,7 +199,7 @@ async function cmdRun(opts, resumeOf = null) {
   const outFile = path.join(runDir(id), "last-message.txt");
   const built = buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId: resumeOf?.sessionId });
   built.args = built.args.map((a) => (a === "__OUT__" ? outFile : a));
-  const meta = { id, role, backend, model, effort, cwd, write, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin };
+  const meta = { id, role, backend, model, effort, cwd, write, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null };
   if (write) meta.lock = acquireWriteLock(cwd, id, role);
   fs.writeFileSync(path.join(runDir(id), "prompt.md"), prompt);
 
@@ -213,11 +220,24 @@ async function cmdRun(opts, resumeOf = null) {
     if (m.result && m.result.status) m.workerStatus = m.result.status;
     if (write) { releaseWriteLock(cwd, id); delete m.lock; }
     saveMeta(m); writeJson(path.join(runDir(id), "result.json"), m.result);
-    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId }) + "\n");
+    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
   };
 
   const timer = setTimeout(() => { const m = metaOf(id); if (m && m.status === "running") { m.killReason = "timeout"; saveMeta(m); try { process.kill(-child.pid, "SIGKILL"); } catch {} } }, timeoutMin * 60_000);
-  child.on("exit", (code, signal) => { clearTimeout(timer); finish(code, signal); if (!opts._supervise) printResult(id); process.exit(0); });
+  child.on("exit", async (code, signal) => {
+    clearTimeout(timer); finish(code, signal);
+    const m = metaOf(id);
+    const fallbackMode = opts.fallback || process.env.DELEGATE_KIT_FALLBACK || "auto";
+    if (fallbackMode !== "none" && !opts._fallbackFrom && !resumeOf && isQuotaError(m, fs.readFileSync(stderrPath, "utf8"))) {
+      const nb = otherBackend(backend);
+      process.stderr.write(`agent-run: ${backend} reported a usage/rate limit; retrying once on ${nb} (fallback). Use --fallback none to disable.\n`);
+      m.status = "failed-quota"; saveMeta(m);
+      const next = { ...opts, backend: nb, model: undefined, effort: opts.effort, _fallbackFrom: id, detach: false, id: undefined };
+      await cmdRun(next, null);
+      return;
+    }
+    if (!opts._supervise) printResult(id); process.exit(0);
+  });
 
   if (opts.detach) {
     // cmdRun was re-invoked as a detached supervisor; the caller already returned
@@ -227,7 +247,8 @@ async function cmdRun(opts, resumeOf = null) {
 
 function printResult(id) {
   const m = metaOf(id); if (!m) die(`unknown run ${id}`);
-  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, cwd: m.cwd, status: m.status, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
+  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, cwd: m.cwd, status: m.status, fallback_from: m.fallbackFrom ?? undefined,
+    note: m.fallbackFrom ? `ran on ${m.backend} because the other vendor hit a usage limit${m.role === "reviewer" || m.role === "verifier" ? "; check that the reviewer is still a different vendor than the author" : ""}` : undefined, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
 
@@ -263,7 +284,7 @@ switch (sub) {
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
   agent-run run --role <${Object.keys(ROLES).join("|")}> [--backend claude|codex] [--model M] [--effort E]
-                [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout]
+                [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout] [--fallback auto|none]
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
 
