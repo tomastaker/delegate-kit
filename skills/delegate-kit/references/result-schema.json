@@ -4,7 +4,15 @@
   "additionalProperties": false,
   "required": [
     "status",
-    "summary"
+    "summary",
+    "changes",
+    "checks_run",
+    "not_verified",
+    "plan",
+    "findings",
+    "questions",
+    "sources",
+    "next_steps"
   ],
   "properties": {
     "status": {
@@ -21,18 +29,23 @@
     },
     "changes": {
       "type": "array",
+      "description": "Files this worker modified. Empty array for read-only roles.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "file"
+          "file",
+          "note"
         ],
         "properties": {
           "file": {
             "type": "string"
           },
           "note": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
@@ -42,21 +55,25 @@
       "items": {
         "type": "string"
       },
-      "description": "Commands actually executed and their outcome, e.g. 'pnpm test -- tariffs: 42 passed'."
+      "description": "Commands actually executed and their outcome, e.g. 'pnpm test -- tariffs: 42 passed'. Empty array if none."
     },
     "not_verified": {
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Claims or steps this worker could not confirm. Empty array if none."
     },
     "plan": {
       "type": "array",
+      "description": "Ordered steps. Planner role only; empty array otherwise.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "step"
+          "step",
+          "files",
+          "risk"
         ],
         "properties": {
           "step": {
@@ -69,19 +86,29 @@
             }
           },
           "risk": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }
     },
     "findings": {
       "type": "array",
+      "description": "Reviewer/verifier/researcher findings. Empty array if none.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
           "severity",
-          "claim"
+          "kind",
+          "file",
+          "line",
+          "claim",
+          "evidence",
+          "suggested_fix",
+          "verdict"
         ],
         "properties": {
           "severity": {
@@ -93,35 +120,55 @@
             ]
           },
           "kind": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "spec",
               "correctness",
               "standards",
-              "nit"
+              "nit",
+              null
             ]
           },
           "file": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "line": {
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "claim": {
             "type": "string"
           },
           "evidence": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "suggested_fix": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "verdict": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "enum": [
               "confirmed",
               "refuted",
-              "needs-human"
+              "needs-human",
+              null
             ]
           }
         }
@@ -132,28 +179,41 @@
       "items": {
         "type": "string"
       },
-      "description": "Questions for the user; non-empty when status is blocked."
+      "description": "Questions for the user; non-empty when status is blocked, empty array otherwise."
     },
     "sources": {
       "type": "array",
+      "description": "Primary sources actually opened. Researcher role especially; empty array if none.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "url"
+          "url",
+          "title",
+          "date",
+          "verified"
         ],
         "properties": {
           "url": {
             "type": "string"
           },
           "title": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "date": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "verified": {
-            "type": "boolean"
+            "type": [
+              "boolean",
+              "null"
+            ]
           }
         }
       }
@@ -162,7 +222,8 @@
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "Concrete follow-up actions. Empty array if none."
     }
   }
 }

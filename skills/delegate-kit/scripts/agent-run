@@ -33,7 +33,7 @@ const ROLE_PREAMBLE = {
   verifier: "You are a read-only VERIFIER. Decide whether the given finding is confirmed, refuted, or needs-human, with concrete evidence from the code.",
   researcher: "You are a read-only RESEARCHER. Use primary sources; return URLs and dates; a search snippet is not evidence; mark anything you could not open as UNVERIFIED.",
 };
-const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single JSON object matching the delegate-kit result schema: {"status":"done|blocked|failed","summary":string,"changes":[{"file","note"}],"checks_run":[string],"not_verified":[string],"plan":[{"step","files","risk"}],"findings":[{"severity","kind","file","line","claim","evidence","suggested_fix","verdict"}],"questions":[string],"sources":[{"url","title","date","verified"}],"next_steps":[string]}. Omit keys you do not need. No prose outside the JSON.`;
+const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single JSON object matching the delegate-kit result schema: {"status":"done|blocked|failed","summary":string,"changes":[{"file","note"}],"checks_run":[string],"not_verified":[string],"plan":[{"step","files","risk"}],"findings":[{"severity","kind","file","line","claim","evidence","suggested_fix","verdict"}],"questions":[string],"sources":[{"url","title","date","verified"}],"next_steps":[string]}. Emit every top-level key: use [] for arrays you have nothing for, and null for optional scalars inside items. Do not omit keys — strict output schemas reject partial objects. No prose outside the JSON.`;
 
 // ---------- helpers ----------
 const die = (msg, code = 1) => { process.stderr.write(`agent-run: ${msg}\n`); process.exit(code); };
@@ -163,6 +163,16 @@ async function cmdRun(opts, resumeOf = null) {
   const [defModel, defEffort] = spec[backend];
   const model = opts.model || (resumeOf ? resumeOf.model : defModel);
   const effort = opts.effort || (resumeOf ? resumeOf.effort : defEffort);
+  // A Claude name passed to codex (or the reverse) fails deep inside the vendor CLI
+  // with an opaque error, so catch the family mismatch here.
+  if (opts.model) {
+    const family = /^gpt-/.test(model) ? "codex" : "claude";
+    if (family !== backend) {
+      die(`--model ${model} is a ${family} model but --backend is ${backend}. ` +
+          `claude: fable | opus | sonnet | haiku. codex: gpt-5.6-pro | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna.`);
+    }
+  }
+  if (!["low", "medium", "high", "xhigh"].includes(effort)) die(`--effort must be low|medium|high|xhigh (got ${effort})`);
   const cwd = path.resolve(opts.cwd || (resumeOf ? resumeOf.cwd : process.cwd()));
   const write = opts.write === true ? true : opts.write === "false" ? false : spec.write;
   if (!fs.existsSync(cwd)) die(`cwd does not exist: ${cwd}`);

@@ -29,8 +29,23 @@ Do not delegate to "keep busy", to use a specific model for its own sake, or to 
 | Requirements in prose with business rules, or ambiguity that reading code cannot resolve, or > 1 module/package, or estimated > ~10 files | **planner** (read-only) before any implementation |
 | A well-specified vertical task of moderate size; or 2 independent parts that can run in parallel | **implementer**, one per task, each in its own worktree |
 | Any delegated implementation; any change in a risk zone (auth, payments, migrations, prod config); or a diff > ~50 lines the parent wrote itself; or the user asks | **reviewer** (read-only, other vendor than the author) |
-| A review finding the implementer disputes, or a high-severity finding in a risk zone | **verifier** (strongest model, read-only, rare) |
-| "Check the current docs / compare options / confirm a hypothesis" | **researcher** (cheap model, read-only, web) |
+| A review finding the implementer disputes, or a high-severity finding in a risk zone — **and one that a command cannot settle** | **verifier** (strongest model, read-only, rare) |
+| "Fetch the current docs and quote them" — extraction, no recommendation at the end | **researcher** (cheap model, read-only, web) |
+| Reading ends in a **recommendation or a choice** ("which of these do we adopt", "is this upgrade safe", "should we keep this dependency") | **planner**, not researcher — see the routing trap below |
+
+**Routing trap: research that ends in a decision is planning.** The word
+"research" covers both "go read the docs and quote them" and "go read the docs and
+tell me what to do". Only the first is the researcher role. The moment the
+deliverable is a recommendation, a risk verdict, or a pick between options, the
+task needs the planner's model tier, because a wrong call propagates into
+everything downstream. Ask what the worker returns: a quote is research, a verdict
+is planning.
+
+**Verify mechanically before spending a verifier.** A verifier is for claims that
+need judgement. If a finding can be settled by running one command — `npm ls`, a
+test, a typecheck, a grep — the parent runs it and closes the finding itself. That
+is faster, cheaper, and more conclusive than another opinion. Reserve the verifier
+for disputes about intent, severity, or design.
 
 If the user ran a grill/interview first, its output is the spec. Save it as `.scratch/<task>/spec.md` (or the repo's own spec location) and point workers at it instead of restating it.
 
@@ -38,15 +53,43 @@ If the user ran a grill/interview first, its output is the spec. Save it as `.sc
 
 Pick the backend by two rules: **do not review your own vendor's work** (Codex-written code is reviewed by Claude and vice versa), and **the planner is the strongest model available** — planning is one read-only call and a bad plan is the most expensive mistake.
 
+### The two model families
+
+The orchestrator may itself be a Claude model or a GPT model. Either way, `--backend`
+decides which family the *worker* comes from, and `--model` must name a model from
+that family. Never pass a Claude name to `--backend codex` or the reverse.
+
+| Tier | `--backend claude` | `--backend codex` |
+|---|---|---|
+| strongest, for planning and hard verification | `fable` | `gpt-5.6-pro` |
+| high, the workhorse for implement and review | `opus` | `gpt-5.6-sol` |
+| mid, for extraction and mechanical work | `sonnet` | `gpt-5.6-terra` |
+| small, rarely worth a worker at all | `haiku` | `gpt-5.6-luna` |
+
+Within the small tier prefer **`gpt-5.6-luna` over `haiku`**: it reasons better and
+follows a brief more literally, which is the whole risk with a cheap worker. Reach
+for the small tier only for bulk mechanical transforms with an unambiguous rule.
+
+Effort values are shared by both families: `low | medium | high | xhigh`.
+
+### Defaults per role
+
 | Role | Backend / model / effort | Permissions |
 |---|---|---|
-| planner | `claude` fable high (fallback: opus high; if Max quota is tight: `codex` gpt-5.6-sol high) | read-only (plan mode) |
+| planner | `claude` fable high (fallback: opus high; if Max quota is tight: `codex` gpt-5.6-pro high, or sol high) | read-only (plan mode) |
 | implementer | `codex` gpt-5.6-sol high for backend/refactor/types; `claude` opus high for UI/design-heavy work | write, inside a worktree |
 | reviewer | opposite vendor of the author: `claude` opus high after Codex; `codex` gpt-5.6-sol high after Claude; UX review → `claude` opus | read-only |
 | verifier | third party: `codex` gpt-5.6-sol xhigh after an Opus review; `claude` fable high after a Sol review | read-only |
 | researcher | `claude` sonnet medium or `codex` gpt-5.6-terra medium | read-only, web allowed |
 
-Override on request: the user can name a model ("plan with Fable", "review with Sol") or pass `--model/--effort` to `agent-run`. Small models on micro-tasks are not worth a worker: the fixed start-up cost dominates. See `references/roles.md` for reasoning and per-role prompt hints.
+**Escalate the researcher when the answer carries risk.** The defaults above assume
+extraction. If the question touches security, auth, payments, data loss, or
+cross-version compatibility, run the researcher at `--model opus --effort high`
+(or `--model gpt-5.6-sol --effort high`) even though the role is nominally cheap —
+or route it to the planner per the routing trap in §2. A cheap researcher reliably
+returns correct quotes and unreliably predicts behaviour.
+
+Override on request: the user can name a model ("plan with Fable", "review with Sol") or pass `--model/--effort` to `agent-run`. Small models on micro-tasks are not worth a worker: the fixed start-up cost dominates — measured at ~50k input tokens for a worker that only reads one line out of one file. See `references/roles.md` for reasoning and per-role prompt hints.
 
 ## 4. Process for one task
 

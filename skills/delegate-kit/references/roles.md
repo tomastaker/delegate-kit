@@ -2,6 +2,14 @@
 
 The matrix in SKILL.md is a default, not a law. This file explains the reasoning so you can deviate deliberately.
 
+## Which family a model name belongs to
+
+The orchestrator may be a Claude model or a GPT model; the worker's family is set by
+`--backend`, and `--model` must name a model from that family. Claude tiers, strongest
+first: `fable`, `opus`, `sonnet`, `haiku`. Codex tiers: `gpt-5.6-pro`, `gpt-5.6-sol`,
+`gpt-5.6-terra`, `gpt-5.6-luna`. Effort is shared: `low | medium | high | xhigh`.
+`agent-run` rejects a name from the wrong family rather than silently falling back.
+
 ## The cost model that drives every choice
 
 - A worker is a fresh session. Fixed cost per worker: its system prompt, project instructions, skill listing, and re-reading the files it needs. Tens of thousands of tokens before it does anything useful.
@@ -35,17 +43,22 @@ The matrix in SKILL.md is a default, not a law. This file explains the reasoning
 
 - **Default** third party: `codex` gpt-5.6-sol xhigh after an Opus review; `claude` fable high after a Sol review.
 - **When**: the implementer disputes a finding, or a high-severity finding lands in a risk zone. Not for every review.
+- **First ask whether a command settles it.** Many findings are mechanically checkable: `npm ls`, a test, a typecheck, a grep, a diff against the previous state. Those the parent verifies directly — one command beats another opinion, and it produces evidence instead of a second guess. Spend a verifier only on claims that turn on judgement: is this severity right, is this the intended behaviour, is this design defensible.
 - **Prompt**: the finding, the counter-argument, the relevant diff hunk. Ask for a verdict (`confirmed` / `refuted` / `needs-human`) with evidence.
 
 ## researcher
 
 - **Default** `claude` sonnet medium or `codex` gpt-5.6-terra medium.
-- **Why cheap**: "fetch official docs, quote with URL and date, say what is verified and what is not" is extraction, not judgement. If judgement is needed (compare architectures, pick a library), that is a planner call.
+- **Why cheap**: "fetch official docs, quote with URL and date, say what is verified and what is not" is extraction, not judgement.
+- **The routing trap.** If judgement is needed — compare architectures, pick a library, decide whether an upgrade is safe — that is a **planner** call, not a researcher one. The word "research" hides two different jobs. Decide by what the worker returns: a quote is research, a verdict is planning. Getting this wrong is the most common misuse of this skill, because "go read the docs" sounds like extraction right up until the answer has to be a recommendation.
+- **Escalate on risk.** Even for genuine extraction, raise to `--model opus --effort high` (or `gpt-5.6-sol high`) when the subject is security, auth, payments, data loss, or cross-version compatibility. Observed failure mode: a cheap researcher quotes changelogs correctly and then predicts tooling behaviour wrongly — it said a peer-dependency mismatch would be a warning; the package manager hard-failed on it.
 - **Rules**: primary sources first; a search snippet is not evidence; return URLs and dates; mark `UNVERIFIED` explicitly.
 
-## Small models (Luna, Haiku) — when
+## Small models — when
 
-Almost never as workers. The start-up cost dominates. Candidates: bulk mechanical transforms across many files with a clear rule, where a cheap model per unit matters. Even then prefer Terra/Sonnet at medium effort for reliability. As a *parent* for trivial chat-level work a small model is fine.
+The small tier is `gpt-5.6-luna` on the Codex side and `haiku` on the Claude side. **Within it, prefer Luna**: it reasons better and follows a brief more literally, and literal brief-following is exactly what fails first on a cheap worker.
+
+Almost never as workers, though. The start-up cost dominates — a worker that reads one line out of one file still costs ~50k input tokens. Candidates: bulk mechanical transforms across many files with an unambiguous rule, where per-unit cost actually matters. Even then Terra or Sonnet at medium effort is usually the better trade. As a *parent* for trivial chat-level work a small model is fine.
 
 ## Parent model choice
 
