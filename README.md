@@ -58,7 +58,8 @@ The choices follow from three facts, not from brand preference:
 
 - **Planning is the cheapest step and the most expensive place to be wrong.** One read-only call, whose mistakes propagate into implementation and review. So the planner gets the strongest model available.
 - **Reviews by the same model family share blind spots.** Independence is the value of a review, so the reviewer is always the other vendor than the author. A verifier is a third party again.
-- **A small model on a micro-task does not pay back the fixed cost of a worker.** Start-up dominates, so Luna/Haiku-class models are not used as workers. Within a family, raising *reasoning effort* moves review and planning quality more than raising model size.
+- **A small model on a micro-task does not pay back the fixed cost of a worker.** Start-up dominates — a worker that reads one line out of one file still costs ~50k input tokens — so the small tier (`gpt-5.6-luna`, `haiku`) is rarely used as a worker at all; when it is, prefer Luna, which follows a brief more literally. Within a family, raising *reasoning effort* moves review and planning quality more than raising model size.
+- **Research that ends in a recommendation is planning.** The researcher role is for extraction — fetch the docs, quote them with a URL. The moment the deliverable is a verdict or a choice between options, it needs the planner's tier, because a wrong call propagates downstream.
 
 Everything is overridable per call (`--backend`, `--model`, `--effort`) or by telling the parent ("plan with Fable", "review with Sol"). The ledger (`~/.delegate-kit/ledger.jsonl`) records model, effort, tokens, duration and outcome per run, so after a couple of weeks you can see where an expensive model never changed the outcome and where a cheap one kept failing — and adjust the table in `scripts/agent-run`.
 
@@ -132,7 +133,7 @@ Two implementers in parallel: add `--detach` to each, then `agent-run wait <id>`
 - It does not steer a worker mid-run. Headless sessions run to completion; you wait, read the result, and resume with a follow-up. When you need live steering inside one vendor, the parent's own native subagents are the better tool — the skill says so.
 - It is not a sandbox. The gate is a list of known dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree.
 - It does not make delegation cheap. A worker is a full session; the skill exists to make sure you pay that price only when independence, parallelism or a clean context is worth it.
-- Model names are the CLIs' aliases (`fable`, `opus`, `sonnet`, `gpt-5.6-sol`, `gpt-5.6-terra`). When vendors rename models, update the table at the top of `scripts/agent-run`.
+- Model names are the CLIs' own aliases, and the two families never mix: Claude is `fable | opus | sonnet | haiku`, Codex is `gpt-5.6-pro | gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna`. `agent-run` rejects a name from the family that does not match `--backend`. When vendors rename models, update the table at the top of `scripts/agent-run` and the guard next to it.
 
 ## A note on subscriptions
 
