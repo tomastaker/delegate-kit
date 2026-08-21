@@ -2,6 +2,8 @@
 
 Keep it under ~40 lines. The worker reads the code itself; your job is to remove ambiguity, not to narrate the repository.
 
+The same brief serves both dispatch paths: `--brief` for an external `agent-run` worker, or the prompt body for a native subagent. Do not restate the role in it — the role preamble comes from `agent-run` or from the installed `dk-*` definition. A native writer needs one extra line the external one gets from `--cwd`: **the absolute worktree path it may touch.**
+
 ```markdown
 # Task: <short name>
 
@@ -23,6 +25,9 @@ Keep it under ~40 lines. The worker reads the code itself; your job is to remove
 - Follow the repo's AGENTS.md/CLAUDE.md. Do not touch: <paths>.
 - No new dependencies without stating why.
 - <project-specific rule>
+
+## Worktree (native writers only)
+Work only inside `<absolute path from agent-wt create>`. Run git as `git -C <that path> ...`.
 
 ## Return
 The delegate-kit result JSON. If anything is ambiguous, return `status: blocked` with precise `questions` instead of guessing.

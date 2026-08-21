@@ -9,7 +9,8 @@ agent-wt create <name> [--base REF]   create worktree + branch dk/<name> (defaul
 agent-wt list                         list worktrees with lock/owner/status
 agent-wt status <name>                path, branch, lock, dirty files, commits ahead of base
 agent-wt diff <name> [--base REF]     frozen diff: base..HEAD plus uncommitted changes
-agent-wt release <name>               remove the write-lock (only if its process is gone or --force)
+agent-wt lock <name> [--label TXT]    take the write-lock for a native subagent the parent spawns itself
+agent-wt release <name> [--force]     remove the write-lock (only if its process is gone or --force)
 agent-wt remove <name> [--force]      remove worktree and branch (refuses if locked or dirty unless --force)
 agent-wt cleanup                      remove worktrees whose branch is merged into the base and are unlocked
 EOF
@@ -34,7 +35,10 @@ base_ref_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(c
 lock_info() {
   local lf; lf=$(lock_file "$1" 2>/dev/null) || { echo "no-lock"; return; }
   [ -f "$lf" ] || { echo "unlocked"; return; }
-  local pid; pid=$(jq -r '.pid // empty' "$lf")
+  local kind pid; kind=$(jq -r '.kind // "process"' "$lf"); pid=$(jq -r '.pid // empty' "$lf")
+  # A native lock has no process behind it: the parent holds it on behalf of its own
+  # subagent and releases it by hand. It is live until someone releases it.
+  if [ "$kind" = "native" ]; then echo "locked(native, label=$(jq -r '.label // "-"' "$lf"), since=$(jq -r '.since // "?"' "$lf"))"; return; fi
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "locked(run=$(jq -r .id "$lf"), pid=$pid)"; else echo "stale-lock(run=$(jq -r .id "$lf"))"; fi
 }
 
@@ -91,6 +95,22 @@ cmd_diff() {
   (cd "$p" && git add -N . >/dev/null 2>&1 || true; git diff "$base")
 }
 
+cmd_lock() {
+  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
+  local label="native-subagent"
+  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; *) die "unknown option $1";; esac; done
+  local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name (create it first)"
+  local lf; lf=$(lock_file "$name")
+  if [ -f "$lf" ]; then
+    local info; info=$(lock_info "$name")
+    [[ "$info" == locked* ]] && die "worktree is already $info; one writer per worktree"
+    rm -f "$lf"   # stale process lock
+  fi
+  jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{id:$id,kind:"native",label:$label,role:"implementer",pid:null,cwd:$cwd,since:$since}' > "$lf"
+  jq -n --arg n "$name" --arg p "$p" --arg l "$label" '{name:$n,path:$p,locked_for:$l,release_with:("agent-wt release " + $n)}'
+}
+
 cmd_release() {
   local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
   local force=0; [ "${1:-}" = "--force" ] && force=1
@@ -98,6 +118,7 @@ cmd_release() {
   [ -f "$lf" ] || { echo "already unlocked"; return; }
   local pid; pid=$(jq -r '.pid // empty' "$lf")
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ $force -eq 0 ]; then die "lock held by live process $pid; use --force after stopping the worker (agent-run kill <id>)"; fi
+  # native locks have no process: releasing one is the parent saying its subagent is done
   rm -f "$lf"; echo "released"
 }
 
@@ -137,6 +158,7 @@ case "${1:-}" in
   list) cmd_list;;
   status) shift; cmd_status "$@";;
   diff) shift; cmd_diff "$@";;
+  lock) shift; cmd_lock "$@";;
   release) shift; cmd_release "$@";;
   remove) shift; cmd_remove "$@";;
   cleanup) cmd_cleanup;;
