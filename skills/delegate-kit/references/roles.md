@@ -6,9 +6,57 @@ The matrix in SKILL.md is a default, not a law. This file explains the reasoning
 
 The orchestrator may be a Claude model or a GPT model; the worker's family is set by
 `--backend`, and `--model` must name a model from that family. Claude tiers, strongest
-first: `fable`, `opus`, `sonnet`, `haiku`. Codex tiers: `gpt-5.6-pro`, `gpt-5.6-sol`,
-`gpt-5.6-terra`, `gpt-5.6-luna`. Effort is shared: `low | medium | high | xhigh`.
+first: `fable`, `opus`, `sonnet`, `haiku`. Codex tiers: `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-5.6-luna` — the CLI is not offered a `pro` worker, so the strongest Codex role is
+sol at `xhigh` (verify with `~/.codex/models_cache.json`, which also lists the efforts
+each model accepts). Effort: `low | medium | high | xhigh | max`, plus `ultra` on Codex.
 `agent-run` rejects a name from the wrong family rather than silently falling back.
+
+## Native or external, and why it is not just plumbing
+
+A parent spawns its own family natively — the `Agent` tool in Claude Code, `spawn_agent`
+in Codex — and the other family through `agent-run`. Native dispatch is cheaper in
+wall-clock and in the parent's own tokens: no CLI cold start, no reading a JSON log back,
+and the subagent can be continued in place. That is why it is the default inside the family.
+
+What you give up going native is worth naming, because it is exactly what a bad delegation
+loses first:
+
+- **No enforced sandbox.** An external read-only role runs under `--permission-mode plan` /
+  `-s read-only`; a native one is read-only because its definition says so and its tool list
+  has no writer. Instruction-level read-only is fine for a reviewer you dispatched yourself;
+  it is not fine as the isolation boundary around an untrusted change.
+- **No strict output schema.** External workers are held to `references/result-schema.json`
+  by the vendor's structured-output flag. Native ones follow the contract because the role
+  definition asks them to. Expect to have to re-read a malformed result occasionally.
+- **No ledger, no run id, no timeout, no quota fallback.** Those live in `agent-run`. If you
+  want to compare models later, or to resume a worker tomorrow, or to have the other vendor
+  pick up automatically when this one hits its limit, dispatch externally.
+- **No write-lock for free.** `agent-run` takes the worktree lock itself. A native writer
+  needs `agent-wt lock <task>` from the parent and `agent-wt release <task>` afterwards.
+
+The role definitions live in `agents/dk-*.md` (Claude Code) and
+`references/codex-agents.toml` (Codex); `hooks/install.sh` installs both. They carry the
+model and the effort, so a native dispatch is `subagent_type: dk-reviewer` and nothing else —
+do not paste the role description into the prompt.
+
+## Presets: which subscription pays
+
+Quota is not symmetric over time. A preset (`auto`, `main-claude`, `main-codex`) moves the
+token-heavy roles — planner, implementer, researcher — onto one family. It deliberately does
+not move the reviewer or the verifier: those are derived from whoever wrote the code, and a
+preset that could flip them would quietly buy quota by giving up independence, which is the
+one thing delegation is for. A review is one read-only pass over a frozen diff, so leaving it
+on the other family costs little.
+
+Read the second-order effect before choosing: `main-claude` means the reviewer is Codex, and
+`main-codex` means it is Claude. If the family you are trying to spare is also the one that
+must review, the honest move is to run the review later rather than to run it on the author's
+own family — or to accept the fallback note that `agent-run` prints when it had to.
+
+`agent-run route --role <role>` resolves preset, family, model, effort and dispatch in one
+call. Use it instead of re-deriving the table from memory; `agent-run preset <name>` persists
+the choice in `~/.delegate-kit/config.json`.
 
 ## The cost model that drives every choice
 
@@ -20,7 +68,7 @@ first: `fable`, `opus`, `sonnet`, `haiku`. Codex tiers: `gpt-5.6-pro`, `gpt-5.6-
 
 ## planner
 
-- **Default** `claude` fable high. Fallback opus high. Codex fallback gpt-5.6-sol high.
+- **Default** `claude` fable high. Fallback opus high. On the Codex side gpt-5.6-sol xhigh (there is no `pro` worker).
 - **Why strongest**: one read-only call; errors here propagate into implementation and review. Decomposition quality is the whole point.
 - **Prompt hints**: give the spec, ask for a plan with ordered steps, file-level touch list, risks, open questions marked `blocking` vs `nice-to-know`, and acceptance checks. Ask it to state assumptions explicitly. Forbid code changes.
 - **When to skip**: the parent is already a strong model and the task is clear, or the task is small.
@@ -41,7 +89,7 @@ first: `fable`, `opus`, `sonnet`, `haiku`. Codex tiers: `gpt-5.6-pro`, `gpt-5.6-
 
 ## verifier
 
-- **Default** third party: `codex` gpt-5.6-sol xhigh after an Opus review; `claude` fable high after a Sol review.
+- **Default** third party: `codex` gpt-5.6-sol xhigh after an Opus review; `claude` fable high after a Sol review. Dispatch it externally even when the family matches the parent — a verdict you will act on deserves the enforced sandbox and the recorded run.
 - **When**: the implementer disputes a finding, or a high-severity finding lands in a risk zone. Not for every review.
 - **First ask whether a command settles it.** Many findings are mechanically checkable: `npm ls`, a test, a typecheck, a grep, a diff against the previous state. Those the parent verifies directly — one command beats another opinion, and it produces evidence instead of a second guess. Spend a verifier only on claims that turn on judgement: is this severity right, is this the intended behaviour, is this design defensible.
 - **Prompt**: the finding, the counter-argument, the relevant diff hunk. Ask for a verdict (`confirmed` / `refuted` / `needs-human`) with evidence.
@@ -64,7 +112,8 @@ Almost never as workers, though. The start-up cost dominates — a worker that r
 
 - Routine orchestration: Opus 5 / Sol / Sonnet 5 / Terra. The parent writes briefs and reads reports; that does not need the top model.
 - Switch the parent up (Fable / Sol xhigh) for a grill session, an architecture decision, or a hard bug the parent must reason about itself. Switch back afterwards.
+- The parent's family also decides which roles can be native at all. A Claude parent under `main-claude` runs almost everything natively and pays for exactly one external session — the Codex reviewer. That is the cheapest shape this skill has, and it is the one to reach for when Codex quota is the scarce resource.
 
 ## Tuning
 
-`~/.delegate-kit/ledger.jsonl` has one line per run: role, backend, model, effort, tokens, duration, status. After a couple of weeks, look for roles where the expensive model never changes the outcome (downgrade) and roles with repeated `failed`/`blocked` (upgrade or fix the brief template).
+`~/.delegate-kit/ledger.jsonl` has one line per external run: role, backend, model, effort, preset, tokens, duration, status. Native dispatches are not in it — that is a real gap when you are comparing families, and a reason to run a comparison externally on both sides rather than trusting an impression. After a couple of weeks, look for roles where the expensive model never changes the outcome (downgrade) and roles with repeated `failed`/`blocked` (upgrade or fix the brief template).

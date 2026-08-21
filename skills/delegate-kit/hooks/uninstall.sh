@@ -17,3 +17,16 @@ JS
   cp "$file" "$file.bak-delegate-kit-$ts"; mv "$tmp" "$file"; echo "updated $file (backup: $file.bak-delegate-kit-$ts)"; }
 strip "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
 strip "${CODEX_HOME:-$HOME/.codex}/hooks.json"
+
+# native subagent roles
+CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
+for f in "$CLAUDE_HOME"/agents/dk-*.md; do
+  [ -L "$f" ] || continue
+  case "$(readlink "$f")" in *delegate-kit/agents/dk-*) rm -f "$f"; echo "removed $f";; esac
+done
+cfg="$CODEX_DIR/config.toml"
+if [ -f "$cfg" ] && grep -q '^# >>> delegate-kit agents >>>' "$cfg"; then
+  ts=$(date +%Y%m%d-%H%M%S); cp "$cfg" "$cfg.bak-delegate-kit-$ts"
+  awk '/^# >>> delegate-kit agents >>>/{skip=1} !skip{print} /^# <<< delegate-kit agents <<</{skip=0}' "$cfg.bak-delegate-kit-$ts" > "$cfg"
+  echo "removed [agents.dk-*] from $cfg (backup: $cfg.bak-delegate-kit-$ts)"
+fi
