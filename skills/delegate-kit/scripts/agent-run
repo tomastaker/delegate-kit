@@ -250,8 +250,13 @@ function buildCommand({ backend, role, model, effort, cwd, prompt, write, resume
       "-c", `model_reasoning_effort="${effort}"`,
       ...noSubagents];
     if (resumeId) {
-      // codex exec resume <id> [prompt]; model/effort apply via -c for the new turn
-      return { cmd: "codex", args: ["exec", "resume", "--json", "--skip-git-repo-check", "-s", write ? "workspace-write" : "read-only", "-c", `model_reasoning_effort="${effort}"`, ...noSubagents, "-o", "__OUT__", resumeId, prompt] };
+      // `codex exec resume` has no -s flag (only `codex exec` does); the sandbox goes in
+      // through -c, which resume accepts. Model and schema are passed the same way as
+      // for a fresh run so a resumed turn is held to the same contract.
+      return { cmd: "codex", args: ["exec", "resume", "--json", "--skip-git-repo-check",
+        "-c", `sandbox_mode="${write ? "workspace-write" : "read-only"}"`,
+        "-c", `model_reasoning_effort="${effort}"`, ...noSubagents,
+        "-m", model, "--output-schema", SCHEMA_PATH, "-o", "__OUT__", resumeId, prompt] };
     }
     args.push("-m", model, "--output-schema", SCHEMA_PATH, "-o", "__OUT__", prompt);
     return { cmd: "codex", args };
