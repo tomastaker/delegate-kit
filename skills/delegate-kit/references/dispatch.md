@@ -53,4 +53,20 @@ Set it, in order of precedence:
 
 Explicit `--backend` / `--model` / `--effort` always win over the preset, and the user can simply name a model ("plan with Fable", "review with Sol").
 
+## Changing the defaults for yourself
+
+The role table shipped in `scripts/agent-run` is the default for every user of the skill: planner, verifier and review lead on the strongest model, implementer and reviewer on the workhorse tier. Change it for yourself — not for everyone — in `~/.delegate-kit/config.json`:
+
+```json
+{
+  "preset": "main-claude",
+  "roles": {
+    "planner":  { "claude": ["fable", "xhigh"] },
+    "reviewer": { "codex":  ["gpt-5.6-sol", "xhigh"] }
+  }
+}
+```
+
+Each entry is `["model", "effort"]` per family; anything you leave out keeps the shipped default, and `agent-run preset` prints the effective table. A malformed entry is reported and ignored, never applied half-way. This is the place for "I always want the planner on xhigh" — one edit instead of saying it every time, and the repository's defaults stay universal.
+
 A Claude parent under `main-claude` runs almost everything natively and pays for exactly one external session — the Codex reviewer. That is the cheapest shape this skill has.
