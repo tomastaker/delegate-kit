@@ -79,7 +79,9 @@ DELEGATE_KIT_PRESET=main-codex …   # for one shell
 agent-run run --preset main-claude --role implementer …
 ```
 
-Aliases: `main-gpt` and `main-openai` mean `main-codex`; `main-anthropic` means `main-claude`. Explicit `--backend`/`--model`/`--effort` always win.
+Aliases: `main-gpt` and `main-openai` mean `main-codex`; `main-anthropic` means `main-claude`. Plain words work too — "let Codex implement this", "main model Claude" — the parent maps them to the preset. Explicit `--backend`/`--model`/`--effort` always win.
+
+Your own defaults go in `~/.delegate-kit/config.json` — `"preset"`, and `"roles"` with `["model", "effort"]` per role and family — so "I always want the planner on xhigh" is one edit rather than a phrase in every request, and the repository's table stays the default for everyone else. `agent-run preset` prints the effective table.
 
 ## Review depth: one reviewer, or a panel of lenses
 

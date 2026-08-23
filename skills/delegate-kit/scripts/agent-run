@@ -31,6 +31,23 @@ const ROLES = {
   researcher:  { write: false, claude: ["sonnet", "medium"],  codex: ["gpt-5.6-terra", "medium"] },
   "review-lead": { write: false, claude: ["fable", "high"],   codex: ["gpt-5.6-sol", "xhigh"] },
 };
+// Per-user overrides live in ~/.delegate-kit/config.json under "roles":
+//   { "roles": { "planner": { "claude": ["opus", "high"] }, "reviewer": { "codex": ["gpt-5.6-sol", "xhigh"] } } }
+// The shipped table above is the default for everyone; the config is how one user changes it
+// without editing this file. Applied before any routing.
+const CONFIG_FILE = path.join(STATE_DIR, "config.json");
+(function applyRoleOverrides() {
+  let cfg; try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return; }
+  const roles = cfg && cfg.roles; if (!roles || typeof roles !== "object") return;
+  for (const [role, fam] of Object.entries(roles)) {
+    if (!ROLES[role]) { process.stderr.write(`agent-run: config.json roles.${role} ignored — unknown role\n`); continue; }
+    for (const backend of ["claude", "codex"]) {
+      const v = fam && fam[backend]; if (v === undefined) continue;
+      if (!Array.isArray(v) || v.length !== 2 || typeof v[0] !== "string" || typeof v[1] !== "string") { process.stderr.write(`agent-run: config.json roles.${role}.${backend} ignored — expected ["model", "effort"]\n`); continue; }
+      ROLES[role][backend] = [v[0], v[1]];
+    }
+  }
+})();
 const ROLE_PREAMBLE = {
   planner: "You are a read-only PLANNER. Do not modify files. Produce an ordered plan with files per step, risks, blocking vs non-blocking questions, and the checks that prove completion.",
   implementer: "You are the IMPLEMENTER for exactly this task. Work only inside the current directory (a dedicated git worktree). Run the acceptance checks you can. Commit your work on the current branch with a clear message. If something is ambiguous, stop and return status=blocked with precise questions instead of guessing.",
@@ -121,7 +138,6 @@ const PRESETS = {
   "main-codex":  { planner: "codex",  implementer: "codex",  researcher: "codex" },
 };
 const PRESET_ALIASES = { default: "auto", none: "auto", claude: "main-claude", anthropic: "main-claude", "main-anthropic": "main-claude", codex: "main-codex", gpt: "main-codex", openai: "main-codex", "main-gpt": "main-codex", "main-openai": "main-codex" };
-const CONFIG_FILE = path.join(STATE_DIR, "config.json");
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 const validEffort = (backend, e) => EFFORTS.includes(e) || (backend === "codex" && e === "ultra");
 
@@ -162,8 +178,10 @@ function resolveRoute(opts = {}) {
   // Who wrote the code decides the reviewer. Default to whoever this preset would have
   // implemented with — including the UI exception, or the reviewer flips to the wrong family.
   const defaultAuthor = preset === "auto" && uiKind ? "claude" : table.implementer;
-  const author = opts["author-backend"] && opts["author-backend"] !== true ? String(opts["author-backend"]) : defaultAuthor;
-  if (!["claude", "codex"].includes(author)) die("--author-backend must be claude or codex");
+  // `self`: the parent wrote the change itself, so the author is the parent's family
+  let author = opts["author-backend"] && opts["author-backend"] !== true ? String(opts["author-backend"]) : defaultAuthor;
+  if (author === "self") { if (!parent) die("--author-backend self needs a detectable parent (or --parent)"); author = parent; }
+  if (!["claude", "codex"].includes(author)) die("--author-backend must be claude, codex or self");
 
   let backend;
   if (role === "reviewer") {
@@ -308,7 +326,9 @@ function cmdPreset(argv) {
     const cfg = readJson(CONFIG_FILE, {}) || {};
     return console.log(JSON.stringify({ preset: currentPreset({}), available: Object.keys(PRESETS),
       from: { flag: null, env: process.env.DELEGATE_KIT_PRESET ?? null, config: cfg.preset ?? null, file: CONFIG_FILE },
-      routes: PRESETS[currentPreset({})] }, null, 2));
+      routes: PRESETS[currentPreset({})],
+      roles: Object.fromEntries(Object.entries(ROLES).map(([r, v]) => [r, { claude: v.claude.join(" "), codex: v.codex.join(" ") }])),
+      role_overrides: cfg.roles ?? null }, null, 2));
   }
   const p = normalizePreset(v, "argument");
   const cfg = readJson(CONFIG_FILE, {}) || {};
@@ -532,7 +552,7 @@ switch (sub) {
   default:
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
-  agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend B] [--kind ui|refactor|mechanical]
+  agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend claude|codex|self] [--kind ui|refactor|mechanical]
                                           who should run this role, on which family, natively or externally
   agent-run route --role reviewer [--diff FILE] [--depth single|panel|led]
                                           how many reviewers this diff deserves, which lens and family each gets, and the lead
@@ -545,7 +565,8 @@ switch (sub) {
 
 Presets move the token-heavy roles (planner, implementer, researcher) to one family; reviewer and
 verifier always stay on the other family than the author. Precedence: --preset > DELEGATE_KIT_PRESET
-> ${CONFIG_FILE} > auto.
+> ${CONFIG_FILE} > auto. Per-role model/effort defaults can be overridden in the same file under
+"roles": { "<role>": { "claude": ["model","effort"], "codex": ["model","effort"] } }; \`agent-run preset\` shows the effective table.
 
 State: ${STATE_DIR}  (config.json, runs/<id>/{meta.json,prompt.md,stdout.log,stderr.log,result.json}, ledger.jsonl)`);
 }
