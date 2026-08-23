@@ -77,8 +77,11 @@ const [file, block] = process.argv.slice(2);
 const START = "# >>> delegate-kit agents >>>", END = "# <<< delegate-kit agents <<<";
 const body = [START, fs.readFileSync(block, "utf8").trimEnd(), END].join("\n");
 let cfg = fs.readFileSync(file, "utf8");
-const i = cfg.indexOf(START), j = cfg.indexOf(END);
-if (i !== -1 && j !== -1 && j > i) cfg = cfg.slice(0, i) + body + cfg.slice(j + END.length);
+// markers match whole lines only, so the same text inside a comment never counts
+const lineIdx = (s, marker) => { const m = new RegExp(`^${marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").exec(s); return m ? m.index : -1; };
+const i = lineIdx(cfg, START);
+const j = i === -1 ? -1 : (() => { const k = lineIdx(cfg.slice(i + START.length), END); return k === -1 ? -1 : i + START.length + k; })();
+if (i !== -1 && j !== -1) cfg = cfg.slice(0, i) + body + cfg.slice(j + END.length);
 else cfg = cfg.replace(/\s*$/, "") + (cfg.trim() ? "\n\n" : "") + body + "\n";
 process.stdout.write(cfg);
 EOF
