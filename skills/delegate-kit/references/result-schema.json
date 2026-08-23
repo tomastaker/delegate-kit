@@ -103,12 +103,14 @@
         "required": [
           "severity",
           "kind",
+          "lens",
           "file",
           "line",
           "claim",
           "evidence",
           "suggested_fix",
-          "verdict"
+          "verdict",
+          "raised_by"
         ],
         "properties": {
           "severity": {
@@ -131,6 +133,19 @@
               "nit",
               null
             ]
+          },
+          "lens": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "spec",
+              "correctness",
+              "standards",
+              null
+            ],
+            "description": "Which review lens raised it; null for a single reviewer without a lens."
           },
           "file": {
             "type": [
@@ -170,6 +185,13 @@
               "needs-human",
               null
             ]
+          },
+          "raised_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Panel merges only: slot or run id(s) that raised this finding, e.g. \"A\" or \"A,B\". Null otherwise."
           }
         }
       }

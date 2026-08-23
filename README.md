@@ -13,7 +13,7 @@ Both Claude Code and Codex can spawn subagents, but left to themselves they make
 3. **They have no shared rules.** Your Claude Code session and your Codex session each reinvent how to brief a worker, where it may write, what it must return, and what is too dangerous to do unattended.
 4. **They pay the expensive way for the cheap case.** Claude Code can spawn a Claude subagent natively; Codex can spawn a GPT one. Booting a whole headless CLI session for a worker the parent could have spawned itself is waste — but the *other* family is exactly where independence comes from, and that one does need the external session.
 
-delegate-kit fixes all four with one skill (the policy), one wrapper (`agent-run`), one worktree helper (`agent-wt`), five native role definitions and one safety hook (`gate.sh`). The same files are read by Claude Code, Codex CLI and T3 Code (which runs Claude Code under the hood), so the behaviour is identical no matter which parent you open.
+delegate-kit fixes all four with one skill (the policy), one wrapper (`agent-run`), one worktree helper (`agent-wt`), six native role definitions and one safety hook (`gate.sh`). The same files are read by Claude Code, Codex CLI and T3 Code (which runs Claude Code under the hood), so the behaviour is identical no matter which parent you open.
 
 ## How it works, in one picture
 
@@ -81,6 +81,22 @@ agent-run run --preset main-claude --role implementer …
 
 Aliases: `main-gpt` and `main-openai` mean `main-codex`; `main-anthropic` means `main-claude`. Explicit `--backend`/`--model`/`--effort` always win.
 
+## Review depth: one reviewer, or a panel of lenses
+
+One reviewer from the other family buys **independence** — and that is where the value of a review comes from, so it is the first slot and nothing moves it. A second reviewer with the same brief buys almost nothing: the same angle finds the same things twice. What a second slot should buy is a second **lens**.
+
+| Depth | Reviewers | When |
+|---|---|---|
+| `single` | one, the other family than the author | the default: a small diff, one module, no risk zone |
+| `panel` | two lenses in parallel, blind to each other | ~400+ changed lines, 10+ files, 2+ modules, or any risk zone |
+| `led` | a review lead plans → three lenses → the lead merges | ~1200+ lines, 25+ files, 3+ modules |
+
+The lenses are `spec` (does it do what was asked), `correctness` (is it right) and `standards` (does it follow the repo's conventions, plus a fixed smell baseline). The first two axes and the baseline are adapted from [mattpocock's code-review skill](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md) (MIT) — it keeps its two axes separate for the same reason this skill keeps reviewers blind to each other: one angle must not mask another.
+
+Slot A is the other family than the author; slot B may sit on the author's family, because independence is already paid for and the second slot is there for coverage. `agent-run route --role reviewer --diff review.diff` measures the frozen diff — lines, files, modules, risk zones — and prints the depth, the composition and the cost. A panel is always **proposed with those numbers and run on your yes**; `--depth` set explicitly is that yes. Findings are merged by meaning, agreement raises confidence, silence from one reviewer is coverage rather than a dispute, and an explicit contradiction goes to a command first and a verifier second. The full rules: `references/review.md`.
+
+What it costs is said plainly: `panel` is two review sessions, `led` is three plus two short lead calls plus a verifier per real dispute. That is often more than the implementation cost, which is why `single` is the default and the thresholds are conservative.
+
 ## The roles
 
 | Role | What it does | Default | Access |
@@ -88,6 +104,7 @@ Aliases: `main-gpt` and `main-openai` mean `main-codex`; `main-anthropic` means 
 | **planner** | Decomposes a task: ordered steps, files per step, risks, blocking vs non-blocking questions, the checks that prove completion. | Claude **Fable** high (fallback Opus; on Codex: **Sol** xhigh) | read-only |
 | **implementer** | Implements one vertical slice in its own worktree, runs the acceptance checks it can, commits on its branch. | Codex **Sol** high; Claude **Opus** high for UI/design-heavy work | write, sandboxed, one per worktree |
 | **reviewer** | Reads a frozen diff against the spec. Returns findings with severity, kind (spec / correctness / standards / nit), file:line, evidence, suggested fix. Never restates the diff. | **The other vendor than the author**, high effort. UX review → Claude Opus | read-only |
+| **review-lead** | On a large or risky diff: plans the reviewers (lens, files, brief) before the review and merges their findings into one ranked list after. Two short calls; reads around the diff, not through it. | The planner's family at its strongest: Claude **Fable** high or Codex **Sol** xhigh | read-only |
 | **verifier** | Settles a disputed or high-risk finding: confirmed / refuted / needs-human, with evidence. | A third party: Codex Sol xhigh after an Opus review, Claude Fable high after a Sol review | read-only |
 | **researcher** | Checks current documentation, quotes primary sources with URL and date, marks what it could not verify. | Claude **Sonnet** medium or Codex **Terra** medium | read-only, web |
 
@@ -121,11 +138,11 @@ Because the policy is a skill and the hook is shared, you can also just open the
 - Every run returns the same JSON contract (`status: done | blocked | failed`, `summary`, `changes`, `checks_run`, `not_verified`, `findings`, `plan`, `questions`, `next_steps`) and is archived under `~/.delegate-kit/runs/<id>/`.
 - A worker cannot talk to you. If it needs an answer it returns `status: blocked` with `questions`; the parent asks you and resumes the same session.
 
-- `agent-run route` resolves preset, family, model, effort and native-vs-external in one call; `agent-run preset` shows or persists the default preset.
+- `agent-run route` resolves preset, family, model, effort and native-vs-external in one call; with `--role reviewer --diff FILE` it also sizes the review (depth, lenses, composition, cost). `agent-run preset` shows or persists the default preset. `--lens` and `--panel` on a reviewer run put the lens in the prompt and group the panel's runs in the ledger.
 
 **`agent-wt`** — git worktrees next to the repo (`<repo>.worktrees/<name>`, branch `dk/<name>`), with status, frozen diff against the recorded base, lock and release, removal and cleanup of merged worktrees. `agent-wt lock <name>` is how a parent reserves a worktree for a subagent it spawned natively; `agent-run` refuses to start an external writer there, and the other way round.
 
-**`agents/dk-*.md` and `references/codex-agents.toml`** — the five roles as native subagent definitions, one set per harness, carrying model, effort and tool list. Installed by `hooks/install.sh` into `~/.claude/agents/` and `~/.codex/config.toml`.
+**`agents/dk-*.md` and `references/codex-agents.toml`** — the six roles as native subagent definitions, one set per harness, carrying model, effort and tool list. Installed by `hooks/install.sh` into `~/.claude/agents/` and `~/.codex/config.toml`.
 
 **`hooks/gate.sh`** — a PreToolUse hook registered in both CLIs. Dangerous shell commands (sudo, `rm -rf`, service and firewall changes, certificates, destructive SQL, force-push, history-destroying git, destructive commands over SSH, disk operations…) require your explicit confirmation. On Claude Code that is the normal approval prompt. Codex hooks cannot prompt, so there the command is denied with an instruction to confirm with you and re-run it prefixed with `DELEGATE_KIT_CONFIRMED=1`.
 
@@ -193,9 +210,11 @@ Workers run through the official CLIs with the logins you already have. Running 
 ```
 skills/delegate-kit/
   SKILL.md                     the policy the parent reads
-  agents/dk-*.md               the five roles as native Claude Code subagents
-  references/codex-agents.toml the five roles as native Codex subagents
-  references/roles.md          reasoning per role, prompt hints, tuning
+  agents/dk-*.md               the six roles as native Claude Code subagents
+  references/codex-agents.toml the six roles as native Codex subagents
+  references/dispatch.md       native vs external, presets — the reasoning behind agent-run route
+  references/roles.md          families, tiers, reasoning per role, prompt hints, tuning
+  references/review.md         review depth, lenses, panel composition, merge rules, smell baseline
   references/brief-template.md how to write a brief
   references/result-schema.json the JSON contract
   scripts/agent-run            routing + workers: route / preset / run / resume / list / status / wait / kill / log

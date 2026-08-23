@@ -29,6 +29,7 @@ const ROLES = {
   reviewer:    { write: false, claude: ["opus", "high"],      codex: ["gpt-5.6-sol", "high"] },
   verifier:    { write: false, claude: ["fable", "high"],     codex: ["gpt-5.6-sol", "xhigh"] },
   researcher:  { write: false, claude: ["sonnet", "medium"],  codex: ["gpt-5.6-terra", "medium"] },
+  "review-lead": { write: false, claude: ["fable", "high"],   codex: ["gpt-5.6-sol", "xhigh"] },
 };
 const ROLE_PREAMBLE = {
   planner: "You are a read-only PLANNER. Do not modify files. Produce an ordered plan with files per step, risks, blocking vs non-blocking questions, and the checks that prove completion.",
@@ -36,8 +37,15 @@ const ROLE_PREAMBLE = {
   reviewer: "You are a read-only REVIEWER. Do not modify files. Review the frozen diff against the spec. Report findings with severity, kind (spec|correctness|standards|nit), file, line, claim, evidence, suggested_fix. Do not restate the diff; do not propose out-of-scope refactors.",
   verifier: "You are a read-only VERIFIER. Decide whether the given finding is confirmed, refuted, or needs-human, with concrete evidence from the code.",
   researcher: "You are a read-only RESEARCHER. Use primary sources; return URLs and dates; a search snippet is not evidence; mark anything you could not open as UNVERIFIED.",
+  "review-lead": "You are the read-only REVIEW LEAD. Do not modify files. Before the review: read the spec and the diff stat (not the diff body) and return a plan — one reviewer per step with its lens, files, exclusions, and the brief. After the review: read the reviewers' findings and return one merged, deduplicated, ranked list; mark disputes (one reviewer high, another explicitly fine) for the verifier.",
 };
-const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single JSON object matching the delegate-kit result schema: {"status":"done|blocked|failed","summary":string,"changes":[{"file","note"}],"checks_run":[string],"not_verified":[string],"plan":[{"step","files","risk"}],"findings":[{"severity","kind","file","line","claim","evidence","suggested_fix","verdict"}],"questions":[string],"sources":[{"url","title","date","verified"}],"next_steps":[string]}. Emit every top-level key: use [] for arrays you have nothing for, and null for optional scalars inside items. Do not omit keys — strict output schemas reject partial objects. No prose outside the JSON.`;
+const LENSES = {
+  spec: "LENS: spec. Your priority is whether the diff does what the spec asks: missing or partial requirements, behaviour nobody asked for, requirements that look implemented but wrong. Quote the spec line for each finding.",
+  correctness: "LENS: correctness. Your priority is whether the code is right: edge cases, error paths, concurrency, data loss, leaks, unupdated callers, contract and schema drift.",
+  standards: "LENS: standards. Your priority is whether the code follows this repository's documented conventions and the smell baseline in the brief. A documented repo rule overrides the baseline; skip what tooling already enforces; baseline smells are judgement calls, never hard violations.",
+};
+const LENS_TAIL = "Report high-severity problems outside your lens too; another reviewer covers the other lenses, but a gap between lenses is worse than a duplicate. Set `lens` on every finding.";
+const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single JSON object matching the delegate-kit result schema: {"status":"done|blocked|failed","summary":string,"changes":[{"file","note"}],"checks_run":[string],"not_verified":[string],"plan":[{"step","files","risk"}],"findings":[{"severity","kind","lens","file","line","claim","evidence","suggested_fix","verdict","raised_by"}],"questions":[string],"sources":[{"url","title","date","verified"}],"next_steps":[string]}. Emit every top-level key: use [] for arrays you have nothing for, and null for optional scalars inside items. Do not omit keys — strict output schemas reject partial objects. No prose outside the JSON.`;
 
 // ---------- helpers ----------
 const die = (msg, code = 1) => { process.stderr.write(`agent-run: ${msg}\n`); process.exit(code); };
@@ -165,7 +173,8 @@ function resolveRoute(opts = {}) {
     backend = author; // third party to the reviewer, which is already the author's opposite
     why.push(`verifier is a third party to the reviewer (${otherBackend(author)}), so it lands back on ${backend}`);
   } else {
-    backend = table[role];
+    // the review lead is judgement, not review: it follows the planner's family (strongest per preset)
+    backend = table[role === "review-lead" ? "planner" : role];
     why.push(`preset ${preset} routes ${role} to ${backend}`);
     if (preset === "auto" && role === "implementer" && uiKind) {
       backend = "claude";
@@ -212,8 +221,86 @@ function resolveRoute(opts = {}) {
     ] : undefined };
 }
 
+// ---------- review depth ----------
+// How many reviewers a diff deserves, decided from the frozen diff and not from a feeling.
+// Thresholds are a starting point; tune them from the ledger (lens + panel per run).
+const DEPTHS = ["single", "panel", "led"];
+const DEPTH_RULES = {
+  panel: { lines: 400, files: 10, modules: 2 },  // at or above any of these, or any risk zone
+  led:   { lines: 1200, files: 25, modules: 3 }, // at or above any of these, or a risk zone with >= panel.lines
+};
+const RISK_RE = /auth|session|token|secret|credential|crypt|password|permission|acl|rbac|payment|billing|invoice|tariff|migration|schema|\.env|prod|deploy|infra/i;
+const NOISE_RE = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|Cargo\.lock|go\.sum|poetry\.lock)$|(^|\/)(dist|build|vendor|node_modules|__generated__|generated)\/|\.(snap|min\.js|map)$/;
+
+function diffStats(diffPath) {
+  if (!fs.existsSync(diffPath)) die(`diff not found: ${diffPath}`);
+  const text = fs.readFileSync(diffPath, "utf8");
+  const files = new Set(), noise = new Set(), risk = new Set();
+  let added = 0, removed = 0, cur = null, curNoise = false;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (m) { cur = m[2]; curNoise = NOISE_RE.test(cur); (curNoise ? noise : files).add(cur); if (!curNoise && RISK_RE.test(cur)) risk.add(cur); continue; }
+    if (!cur || curNoise) continue;
+    if (/^\+\+\+|^---/.test(line)) continue;
+    if (line[0] === "+") { added++; if (RISK_RE.test(line)) risk.add(cur); }
+    else if (line[0] === "-") removed++;
+  }
+  // a module is the first path segment, or the second under a workspace-style root
+  const moduleOf = (f) => { const seg = f.split("/"); return /^(packages|apps|services|libs|modules|src)$/.test(seg[0]) && seg.length > 2 ? `${seg[0]}/${seg[1]}` : seg[0]; };
+  const modules = new Set([...files].map(moduleOf));
+  return { lines: added + removed, added, removed, files: files.size, modules: [...modules], risk_zones: [...risk], noise_files: [...noise] };
+}
+
+function suggestDepth(stats, kind) {
+  if (kind === "mechanical") return { depth: "single", because: "mechanical diff (formatting, lockfile, generated) — size means nothing here" };
+  const r = DEPTH_RULES, risk = stats.risk_zones.length > 0, mods = stats.modules.length;
+  if (stats.lines >= r.led.lines || stats.files >= r.led.files || mods >= r.led.modules || (risk && stats.lines >= r.panel.lines))
+    return { depth: "led", because: `${stats.lines} lines, ${stats.files} files, ${mods} modules${risk ? `, risk zones: ${stats.risk_zones.slice(0, 3).join(", ")}` : ""}` };
+  if (stats.lines >= r.panel.lines || stats.files >= r.panel.files || mods >= r.panel.modules || risk)
+    return { depth: "panel", because: risk ? `risk zone touched: ${stats.risk_zones.slice(0, 3).join(", ")}` : `${stats.lines} lines, ${stats.files} files, ${mods} modules` };
+  return { depth: "single", because: `${stats.lines} lines, ${stats.files} files, ${mods} module(s), no risk zone` };
+}
+
+// Slot A is always the other family than the author: that is where independence comes from and
+// nothing moves it. Slot B may sit on the author's family — independence is already paid for, and
+// the second slot buys a second lens, not a second opinion from the same angle. Slot C alternates.
+function reviewComposition(depth, author, kind) {
+  const other = otherBackend(author);
+  const lenses = kind === "refactor" ? ["correctness", "standards", "spec"] : ["correctness", "spec", "standards"];
+  const n = depth === "single" ? 1 : depth === "panel" ? 2 : 3;
+  const families = [other, author, other];
+  return lenses.slice(0, n).map((lens, i) => ({ slot: "ABC"[i], lens, backend: families[i], independent: families[i] !== author }));
+}
+
 function cmdRoute(argv) {
-  process.stdout.write(JSON.stringify(resolveRoute(argv), null, 2) + "\n");
+  const base = resolveRoute(argv);
+  if (argv.role !== "reviewer" && !argv.depth && !argv.diff) return process.stdout.write(JSON.stringify(base, null, 2) + "\n");
+  if (argv.role !== "reviewer") die("--depth and --diff apply to --role reviewer");
+  const kind = String(argv.kind || "").toLowerCase() || null;
+  const stats = argv.diff && argv.diff !== true ? diffStats(argv.diff) : null;
+  const suggested = stats ? suggestDepth(stats, kind) : null;
+  let depth = argv.depth && argv.depth !== true ? String(argv.depth) : (suggested ? suggested.depth : "single");
+  if (!DEPTHS.includes(depth)) die(`--depth must be ${DEPTHS.join("|")} (got ${depth})`);
+  const author = base.backend === "claude" ? "codex" : "claude"; // base already placed the reviewer opposite the author
+  const reviewers = reviewComposition(depth, author, kind).map((r) => {
+    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, depth: undefined, diff: undefined });
+    return { ...r, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke };
+  });
+  const lead = depth === "led" ? (() => { const l = resolveRoute({ ...argv, role: "review-lead", backend: undefined, depth: undefined, diff: undefined }); return { backend: l.backend, model: l.model, effort: l.effort, dispatch: l.dispatch, invoke: l.invoke }; })() : null;
+  const sessions = reviewers.length + (lead ? 2 : 0);
+  const out = { role: "reviewer", preset: base.preset, parent: base.parent, author, depth,
+    suggested: suggested ? { depth: suggested.depth, because: suggested.because, overridden: suggested.depth !== depth } : null,
+    diff: stats, reviewers, lead, cost_note: `${sessions} read-only session(s): ${reviewers.length} reviewer(s)${lead ? " + lead before and after" : ""}; verifier extra per dispute`,
+    merge_rules: depth === "single" ? undefined : [
+      "reviewers run in parallel and blind to each other; the merge is a separate step",
+      "same finding from two reviewers: higher confidence, no verifier needed",
+      "finding from one, silence from the other: coverage, not a dispute",
+      "one says high, the other explicitly says fine: dispute — settle by command first, then verifier",
+      "dedupe by meaning, not by file:line",
+    ],
+    ask_user: depth !== "single" && !(argv.depth && argv.depth !== true) ? "a panel is more than one session — propose it with the numbers above and wait for the user's yes" : undefined,
+  };
+  process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
 function cmdPreset(argv) {
   const v = argv._[1];
@@ -329,7 +416,11 @@ async function cmdRun(opts, resumeOf = null) {
   let prompt = opts.prompt;
   if (!prompt && opts.brief) { if (!fs.existsSync(opts.brief)) die(`brief not found: ${opts.brief}`); prompt = fs.readFileSync(opts.brief, "utf8"); }
   if (!prompt) die("provide --brief FILE or --prompt TEXT");
-  prompt = (resumeOf ? "" : `${ROLE_PREAMBLE[role]}\n\n`) + prompt + RESULT_CONTRACT;
+  const lens = opts.lens && opts.lens !== true ? String(opts.lens) : null;
+  if (lens && !LENSES[lens]) die(`--lens must be ${Object.keys(LENSES).join("|")} (got ${lens})`);
+  if (lens && role !== "reviewer") die("--lens applies to --role reviewer only");
+  const lensText = lens ? `${LENSES[lens]} ${LENS_TAIL}\n\n` : "";
+  prompt = (resumeOf ? "" : `${ROLE_PREAMBLE[role]}\n\n${lensText}`) + prompt + RESULT_CONTRACT;
   const timeoutMin = Number(opts.timeout || 30);
 
   if (opts.detach && !opts._supervise) {
@@ -354,7 +445,8 @@ async function cmdRun(opts, resumeOf = null) {
   const outFile = path.join(runDir(id), "last-message.txt");
   const built = buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId: resumeOf?.sessionId });
   built.args = built.args.map((a) => (a === "__OUT__" ? outFile : a));
-  const meta = { id, role, backend, model, effort, cwd, write, preset: route.preset, dispatch: "external", status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null };
+  const panel = opts.panel && opts.panel !== true ? String(opts.panel) : null;
+  const meta = { id, role, backend, model, effort, cwd, write, preset: route.preset, dispatch: "external", lens, panel, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null };
   if (write) meta.lock = acquireWriteLock(cwd, id, role);
   fs.writeFileSync(path.join(runDir(id), "prompt.md"), prompt);
 
@@ -375,7 +467,7 @@ async function cmdRun(opts, resumeOf = null) {
     if (m.result && m.result.status) m.workerStatus = m.result.status;
     if (write) { releaseWriteLock(cwd, id); delete m.lock; }
     saveMeta(m); writeJson(path.join(runDir(id), "result.json"), m.result);
-    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, preset: m.preset ?? null, dispatch: "external", cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
+    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, preset: m.preset ?? null, dispatch: "external", lens: m.lens ?? null, panel: m.panel ?? null, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
   };
 
   const timer = setTimeout(() => { const m = metaOf(id); if (m && m.status === "running") { m.killReason = "timeout"; saveMeta(m); try { process.kill(-child.pid, "SIGKILL"); } catch {} } }, timeoutMin * 60_000);
@@ -402,7 +494,7 @@ async function cmdRun(opts, resumeOf = null) {
 
 function printResult(id) {
   const m = metaOf(id); if (!m) die(`unknown run ${id}`);
-  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, cwd: m.cwd, status: m.status, fallback_from: m.fallbackFrom ?? undefined,
+  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, fallback_from: m.fallbackFrom ?? undefined,
     note: m.fallbackFrom ? `ran on ${m.backend} because the other vendor hit a usage limit${m.role === "reviewer" || m.role === "verifier" ? "; check that the reviewer is still a different vendor than the author" : ""}` : undefined, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
@@ -440,11 +532,14 @@ switch (sub) {
   default:
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
-  agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend B] [--kind ui]
+  agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend B] [--kind ui|refactor|mechanical]
                                           who should run this role, on which family, natively or externally
+  agent-run route --role reviewer [--diff FILE] [--depth single|panel|led]
+                                          how many reviewers this diff deserves, which lens and family each gets, and the lead
   agent-run preset [${Object.keys(PRESETS).join("|")}]     show or persist the default preset
   agent-run run --role <${Object.keys(ROLES).join("|")}> [--preset P] [--backend claude|codex] [--model M] [--effort E]
                 [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout] [--fallback auto|none]
+                [--lens spec|correctness|standards] [--panel ID]      (reviewer only: lens preamble; panel id groups runs in the ledger)
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
 

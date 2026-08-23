@@ -37,7 +37,11 @@ The delegate-kit result JSON. If anything is ambiguous, return `status: blocked`
 
 **planner**: "Do not change files. Return `plan` as ordered steps with the files each step touches, `questions` split into blocking and non-blocking, and the checks that prove completion."
 
-**reviewer**: "Read-only. The diff is at `<path>`; the spec at `<path>`. Return `findings` with severity (`high` | `medium` | `low`), `file`, `line`, `claim`, `evidence`, `suggested_fix`, and `kind` (`spec` | `correctness` | `standards` | `nit`). Do not restate the diff. Do not propose refactors outside the diff's scope."
+**reviewer**: "Read-only. The diff is at `<path>`; the spec at `<path>`. Return `findings` with severity (`high` | `medium` | `low`), `file`, `line`, `claim`, `evidence`, `suggested_fix`, and `kind` (`spec` | `correctness` | `standards` | `nit`). Findings only — the diff is already known, and scope is the diff."
+
+**reviewer on a panel** (add to the above): "Your lens is `<spec | correctness | standards>` — its definition is in `references/review.md`; for `standards`, the smell baseline there applies under the repo's own rules. The lens is your priority, not your boundary: report a high-severity problem outside it too. Concentrate on `<files the lead or route assigned>`; skip `<generated, lockfiles, vendored>`. Set `lens` on every finding. You are one of `<n>` reviewers; you do not see the others' findings." Externally the lens also goes on the command: `--lens <lens> --panel <id>`.
+
+**review-lead**, call 1: "Spec at `<path>`. Diff stat: `<agent-run route --role reviewer --diff output>`. Depth: `led`. Return `plan`: one step per reviewer with lens, files to concentrate on, exclusions, and the brief text." Call 2: "Reviewer results: `<result.json paths or pasted JSON, labelled A/B/C>`. Return one merged `findings` list with `raised_by`; disputes as `verdict: needs-human`."
 
 **verifier**: "Finding: <text>. Counter-argument: <text>. Return `findings[0].verdict` as `confirmed`, `refuted` or `needs-human` with evidence."
 
