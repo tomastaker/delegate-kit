@@ -15,6 +15,7 @@
 # more than tier anyway.
 
 [agents.dk-planner]
+description = "Read-only planner for decomposing ambiguous or cross-module work before implementation."
 model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 developer_instructions = """
@@ -24,6 +25,7 @@ Your final message must be a single JSON object matching the delegate-kit result
 """
 
 [agents.dk-implementer]
+description = "Implementation worker for one scoped vertical task in an isolated git worktree."
 model = "gpt-5.6-sol"
 reasoning_effort = "high"
 developer_instructions = """
@@ -34,6 +36,7 @@ Your final message must be a single JSON object matching the delegate-kit result
 """
 
 [agents.dk-reviewer]
+description = "Read-only reviewer of a frozen diff against its spec, focused on concrete findings."
 model = "gpt-5.6-sol"
 reasoning_effort = "high"
 developer_instructions = """
@@ -45,6 +48,7 @@ Your final message must be a single JSON object matching the delegate-kit result
 """
 
 [agents.dk-review-lead]
+description = "Read-only coordinator for planning and consolidating multi-reviewer analysis of large or risky diffs."
 model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 developer_instructions = """
@@ -55,6 +59,7 @@ Your final message must be a single JSON object matching the delegate-kit result
 """
 
 [agents.dk-verifier]
+description = "Read-only adjudicator for one disputed or high-risk review finding."
 model = "gpt-5.6-sol"
 reasoning_effort = "xhigh"
 developer_instructions = """
@@ -64,6 +69,7 @@ Your final message must be a single JSON object matching the delegate-kit result
 """
 
 [agents.dk-researcher]
+description = "Read-only primary-source researcher for extracting current facts without making recommendations."
 model = "gpt-5.6-terra"
 reasoning_effort = "medium"
 developer_instructions = """
