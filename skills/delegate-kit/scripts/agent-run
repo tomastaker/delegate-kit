@@ -31,6 +31,30 @@ const ROLES = {
   researcher:  { write: false, claude: ["sonnet", "medium"],  codex: ["gpt-5.6-terra", "medium"] },
   "review-lead": { write: false, claude: ["fable", "high"],   codex: ["gpt-5.6-sol", "xhigh"] },
 };
+/*
+ * Потолок времени на прогон, по ролям.
+ *
+ * Общие 30 минут на всех оказались впритык именно для пишущих ролей. Замер по
+ * ledger на 2026-08-24: 17 прогонов implementer на codex дали медиану 17,1 мин
+ * и максимум 29,3 мин — один финишировал за 42 секунды до убийства, а
+ * следующий (20260824172835-tv4q) в потолок упёрся и был снят на тридцатой
+ * минуте уже после коммита, на финальных проверках. Ревьюеры в тех же данных
+ * укладываются в 4-13 минут и запаса не требуют.
+ *
+ * Потолок здесь — предохранитель от зависшего процесса, а не инструмент
+ * планирования: платить за него приходится только в аварии, поэтому запас
+ * выбран кратный, а не впритык к наблюдаемому максимуму. Конкретный прогон
+ * по-прежнему может задать своё число флагом `--timeout`.
+ */
+const ROLE_TIMEOUT_MIN = {
+  planner: 90,
+  implementer: 90,
+  reviewer: 45,
+  verifier: 45,
+  researcher: 45,
+  "review-lead": 45,
+};
+
 // Per-user overrides live in ~/.delegate-kit/config.json under "roles":
 //   { "roles": { "planner": { "claude": ["opus", "high"] }, "reviewer": { "codex": ["gpt-5.6-sol", "xhigh"] } } }
 // The shipped table above is the default for everyone; the config is how one user changes it
@@ -74,6 +98,43 @@ const runDir = (id) => path.join(RUNS_DIR, id);
 const metaOf = (id) => readJson(path.join(runDir(id), "meta.json"));
 const saveMeta = (m) => writeJson(path.join(runDir(m.id), "meta.json"), m);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+/*
+ * Сверка записанного статуса с фактической жизнью процесса.
+ *
+ * Запись «running» делает супервизор при старте, а снимает — его обработчик
+ * `exit`. Если сам супервизор не пережил прогон (убит вместе с группой по
+ * таймауту, снят извне, умер вместе с родительской оболочкой), обработчик не
+ * отрабатывает, и прогон остаётся «running» навсегда: он держит write-lock на
+ * worktree и занимает слот в лимите воркеров, а оркестратор ждёт его вечно.
+ *
+ * Раньше эта сверка была скопирована внутрь `list` и `wait`, а `status` —
+ * единственная команда, которой пользуются для опроса, — печатал meta как есть
+ * и врал. Замер 2026-08-24: `status` отдавал «running» для прогона, чей pid был
+ * мёртв 7 минут, а `list` в ту же секунду — «orphaned». Теперь сверка одна на
+ * всех, и обойти её нельзя.
+ *
+ * `killReason` важнее факта смерти: если труп оставлен таймером или `kill`,
+ * причина уже известна и заменять её на «orphaned» значит терять её.
+ */
+function reconcile(m) {
+  if (!m || m.status !== "running" || alive(m.pid)) return m;
+  m.status = m.killReason || "orphaned";
+  m.finished = m.finished || nowIso();
+  if (!m.result) {
+    m.result = {
+      status: "failed",
+      summary: m.killReason === "timeout"
+        ? `Прогон убит по таймауту ${m.timeoutMin} мин. Работа могла быть частично выполнена и закоммичена — проверь worktree ${m.cwd} и stdout.log.`
+        : `Супервизор прогона умер, не записав результат. Проверь worktree ${m.cwd} и stdout.log.`,
+      changes: [], checks_run: [], not_verified: [], findings: [], plan: [], questions: [], sources: [], next_steps: [],
+    };
+    writeJson(path.join(runDir(m.id), "result.json"), m.result);
+  }
+  saveMeta(m);
+  if (m.write) releaseWriteLock(m.cwd, m.id);
+  return m;
+}
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 
 function parseArgs(argv) {
@@ -441,7 +502,7 @@ async function cmdRun(opts, resumeOf = null) {
   if (lens && role !== "reviewer") die("--lens applies to --role reviewer only");
   const lensText = lens ? `${LENSES[lens]} ${LENS_TAIL}\n\n` : "";
   prompt = (resumeOf ? "" : `${ROLE_PREAMBLE[role]}\n\n${lensText}`) + prompt + RESULT_CONTRACT;
-  const timeoutMin = Number(opts.timeout || 30);
+  const timeoutMin = Number(opts.timeout || ROLE_TIMEOUT_MIN[role] || 60);
 
   if (opts.detach && !opts._supervise) {
     const id = newId();
@@ -490,7 +551,26 @@ async function cmdRun(opts, resumeOf = null) {
     fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, preset: m.preset ?? null, dispatch: "external", lens: m.lens ?? null, panel: m.panel ?? null, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
   };
 
-  const timer = setTimeout(() => { const m = metaOf(id); if (m && m.status === "running") { m.killReason = "timeout"; saveMeta(m); try { process.kill(-child.pid, "SIGKILL"); } catch {} } }, timeoutMin * 60_000);
+  /*
+   * Таймаут обязан оставить след.
+   *
+   * Раньше таймер только ставил `killReason` и убивал группу, а статус и
+   * result.json писал обработчик `exit`. Когда супервизор не доживал до него,
+   * прогон навсегда оставался «running» без причины — снаружи это выглядело
+   * как «Codex молча падает» (разбор 2026-08-24, прогон 20260824172835-tv4q).
+   * Теперь причина попадает в meta до убийства, а `reconcile` достроит
+   * result.json при первом же обращении, даже если супервизора уже нет.
+   *
+   * Группа убивается по `-pid`, одиночный процесс — запасным `pid`: дочерний
+   * процесс запущен с `detached`, но если setsid не сработал, группы с таким
+   * идентификатором не существует и первый вызов бросает ESRCH.
+   */
+  const timer = setTimeout(() => {
+    const m = metaOf(id);
+    if (!m || m.status !== "running") return;
+    m.killReason = "timeout"; saveMeta(m);
+    try { process.kill(-child.pid, "SIGKILL"); } catch { try { process.kill(child.pid, "SIGKILL"); } catch {} }
+  }, timeoutMin * 60_000);
   child.on("exit", async (code, signal) => {
     clearTimeout(timer); finish(code, signal);
     const m = metaOf(id);
@@ -513,7 +593,7 @@ async function cmdRun(opts, resumeOf = null) {
 }
 
 function printResult(id) {
-  const m = metaOf(id); if (!m) die(`unknown run ${id}`);
+  const m = reconcile(metaOf(id)); if (!m) die(`unknown run ${id}`);
   const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, fallback_from: m.fallbackFrom ?? undefined,
     note: m.fallbackFrom ? `ran on ${m.backend} because the other vendor hit a usage limit${m.role === "reviewer" || m.role === "verifier" ? "; check that the reviewer is still a different vendor than the author" : ""}` : undefined, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
@@ -521,15 +601,23 @@ function printResult(id) {
 
 function cmdList() {
   if (!fs.existsSync(RUNS_DIR)) return console.log("[]");
-  const rows = fs.readdirSync(RUNS_DIR).sort().map(metaOf).filter(Boolean).map((m) => {
-    if (m.status === "running" && !alive(m.pid)) { m.status = "orphaned"; saveMeta(m); if (m.write) releaseWriteLock(m.cwd, m.id); }
+  const rows = fs.readdirSync(RUNS_DIR).sort().map(metaOf).filter(Boolean).map(reconcile).map((m) => {
     return { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, status: m.status, worker_status: m.workerStatus ?? null, cwd: m.cwd, started: m.started, finished: m.finished ?? null };
   });
   console.log(JSON.stringify(rows, null, 2));
 }
 async function cmdWait(id, timeoutMin) {
   const deadline = Date.now() + Number(timeoutMin || 60) * 60_000;
-  for (;;) { const m = metaOf(id); if (!m) die(`unknown run ${id}`); if (m.status !== "running") return printResult(id); if (!alive(m.pid)) { await new Promise((r) => setTimeout(r, 1500)); const m2 = metaOf(id); if (m2.status === "running") { m2.status = "orphaned"; saveMeta(m2); if (m2.write) releaseWriteLock(m2.cwd, m2.id); } return printResult(id); } if (Date.now() > deadline) die("wait timed out", 124); await new Promise((r) => setTimeout(r, 2000)); }
+  for (;;) {
+    const m = metaOf(id); if (!m) die(`unknown run ${id}`);
+    if (m.status !== "running") return printResult(id);
+    /* Пауза перед сверкой: обработчик `exit` супервизора пишет статус и
+       result.json уже после смерти дочернего процесса, и без задержки живой
+       прогон объявлялся бы осиротевшим в этом окне. */
+    if (!alive(m.pid)) { await new Promise((r) => setTimeout(r, 1500)); return printResult(id); }
+    if (Date.now() > deadline) die("wait timed out", 124);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
 function cmdKill(id) { const m = metaOf(id); if (!m) die(`unknown run ${id}`); if (m.status !== "running") return printResult(id); m.killReason = "killed"; saveMeta(m); try { process.kill(-m.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-m.pid, "SIGKILL"); } catch {} const m2 = metaOf(id); if (m2.status === "running") { m2.status = "killed"; m2.finished = nowIso(); saveMeta(m2); if (m2.write) releaseWriteLock(m2.cwd, id); } printResult(id); }, 3000); }
 function cmdLog(id, which = "stdout") { const p = path.join(runDir(id), which === "err" ? "stderr.log" : which === "prompt" ? "prompt.md" : "stdout.log"); if (!fs.existsSync(p)) die(`no log for ${id}`); process.stdout.write(fs.readFileSync(p, "utf8")); }
@@ -562,6 +650,11 @@ switch (sub) {
                 [--lens spec|correctness|standards] [--panel ID]      (reviewer only: lens preamble; panel id groups runs in the ledger)
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
+
+--timeout on \`run\` is a fuse against a hung worker, not a schedule; without it the role decides:
+${Object.entries(ROLE_TIMEOUT_MIN).map(([r, t]) => `${r} ${t}m`).join(", ")}. A run killed by it ends as
+"timeout", a run whose supervisor died as "orphaned" — both keep whatever the worker committed, so read
+the worktree before rerunning. list, status and wait all reconcile a dead supervisor.
 
 Presets move the token-heavy roles (planner, implementer, researcher) to one family; reviewer and
 verifier always stay on the other family than the author. Precedence: --preset > DELEGATE_KIT_PRESET
