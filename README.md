@@ -195,16 +195,16 @@ agent-run run --role implementer --backend codex --cwd ../repo.worktrees/tariffs
 agent-wt diff tariffs > .scratch/tariffs/review.diff
 agent-run run --role reviewer --backend claude --lens correctness --panel t1 --cwd ../repo.worktrees/tariffs --brief .scratch/tariffs/review.md
 agent-run resume <implementer-id> --prompt "Fix findings 1 and 3 from the review: ..."
-agent-run list | status <id> | wait <id> | kill <id> | log <id>
+agent-run list | status <id> | wait <id> | kill <id> | log <id> | notify [<id>]
 ```
 
-Two implementers in parallel: `--detach` on each, then `agent-run wait <id>`. A native writer: `agent-wt lock tariffs` before dispatch, `agent-wt release tariffs` after. `--help` on either script is the reference for flags.
+Two implementers in parallel: `--detach` on each, then either block on `agent-run wait <id>` or have each one report for itself with `--on-finish CMD` — the only channel an external worker has, since no harness announces it. A native writer: `agent-wt lock tariffs` before dispatch, `agent-wt release tariffs` after. `--help` on either script is the reference for flags.
 
 </details>
 
 ## The tools
 
-**`agent-run`** — routes, starts, resumes, waits for, lists and kills workers. Applies role defaults; read-only roles run `codex -s read-only` / `claude --permission-mode plan`, writers `workspace-write` / `acceptEdits`, never the dangerous modes. Writers must be in a git worktree, one per worktree, at most 2 writers and 4 workers at once. Delegation depth is 1: a worker cannot start workers. Every run returns the JSON contract and is archived under `~/.delegate-kit/runs/<id>/`; the ledger `~/.delegate-kit/ledger.jsonl` records model, effort, preset, lens, tokens, duration and outcome per run.
+**`agent-run`** — routes, starts, resumes, waits for, lists and kills workers, and delivers each completion to an `--on-finish` hook exactly once, retried and surviving a dead supervisor. Applies role defaults; read-only roles run `codex -s read-only` / `claude --permission-mode plan`, writers `workspace-write` / `acceptEdits`, never the dangerous modes. Writers must be in a git worktree, one per worktree, at most 2 writers and 4 workers at once. Delegation depth is 1: a worker cannot start workers. Every run returns the JSON contract and is archived under `~/.delegate-kit/runs/<id>/`; the ledger `~/.delegate-kit/ledger.jsonl` records model, effort, preset, lens, tokens, duration and outcome per run.
 
 **`agent-wt`** — git worktrees next to the repo (`<repo>.worktrees/<name>`, branch `dk/<name>`): create, status, frozen diff against the recorded base, lock (for a native writer), release, remove, cleanup of merged worktrees.
 
@@ -234,10 +234,11 @@ skills/delegate-kit/
   references/review.md          review depth, lenses, panel composition, merge rules, smell baseline
   references/brief-template.md  how to write a brief
   references/result-schema.json the JSON contract
-  scripts/agent-run             route / preset / run / resume / list / status / wait / kill / log
+  scripts/agent-run             route / preset / run / resume / list / status / wait / kill / log / notify
   scripts/agent-wt              create / list / status / diff / lock / release / remove / cleanup
   hooks/gate.sh                 PreToolUse safety gate (Claude Code + Codex)
   hooks/install.sh, uninstall.sh
+  tests/delivery.sh             completion-delivery bench; --race N for the concurrency hammer
 ```
 
 ## License and acknowledgments
