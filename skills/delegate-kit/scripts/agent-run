@@ -182,6 +182,229 @@ function releaseWriteLock(cwd, id) {
   if (existing && existing.id === id) fs.rmSync(lp, { force: true });
 }
 
+/* ---------- доставка завершений (порт из omp AsyncJobManager) ----------
+ *
+ * Проблема, которую это закрывает: родитель-оркестратор узнаёт о конце
+ * внешнего воркера только когда сам спросит. Для воркера своей семьи это
+ * решает harness, для чужой (Codex из Claude и наоборот) — никто. Замер
+ * 2026-08-26: три воркера отработали, и о каждом стало известно только
+ * потому, что пользователь спросил вслух.
+ *
+ * Устройство взято у omp (`packages/coding-agent/src/async/job-manager.ts`):
+ * сообщает не родитель себе опросом, а сам прогон — родителю, через сток
+ * доставки. Оттуда же две детали, без которых сток бесполезен:
+ *
+ *   1. Ретраи. Хук может не сработать по причине, не связанной с прогоном
+ *      (демон уведомлений не поднят, сеть, занятый ресурс). Один выстрел в
+ *      пустоту теряет завершение навсегда.
+ *   2. Ровно однажды. Доставку пробуют несколько процессов: супервизор в
+ *      обработчике `exit`, и любой последующий `list`/`status`/`wait`/`notify`
+ *      — в том числе тогда, когда супервизор умер, не доставив. Без атомарной
+ *      заявки родитель получит одно и то же завершение дважды.
+ *
+ * Заявка — файл `delivery.lock`, создаваемый с флагом `wx`: атомарно на любой
+ * POSIX-ФС. Труп заявки опознаётся по мёртвому pid, иначе брошенный хук
+ * заблокировал бы прогон навсегда.
+ *
+ * Чего здесь намеренно нет: собственного демона. Очередь дренируется тем, кто
+ * и так обращается к прогону, плюс явной командой `notify`. Пока супервизор
+ * жив, он ретраит сам — на поллинг падает только остаток.
+ */
+
+const HOOK_TIMEOUT_MS = Number(process.env.DELEGATE_KIT_HOOK_TIMEOUT_MS || 60_000);
+const DELIVERY_MAX_ATTEMPTS = 5;
+// Пауза перед попыткой N+1, мс. Длина массива задаёт число ретраев.
+const DELIVERY_BACKOFF_MS = [5_000, 15_000, 45_000, 120_000];
+// Сколько супервизор готов ждать, дренируя очередь, прежде чем выйти и
+// оставить остаток поллингу. Покрывает первые три паузы из расписания.
+const SUPERVISOR_DRAIN_BUDGET_MS = 90_000;
+
+const claimPath = (id) => path.join(runDir(id), "delivery.lock");
+
+/*
+ * Жизненный цикл прогона, отдельно от `status`.
+ *
+ * `status` отвечает на вопрос «чем кончилось», и его значения менять нельзя —
+ * на них завязаны и скилл, и внешние вызовы. Здесь второй, ортогональный
+ * вопрос: «можно ли к этому прогону вернуться».
+ *
+ * У omp состояния живого агента — running | idle | parked | aborted, потому
+ * что субагент там живёт внутри процесса и между ходами простаивает. У нас
+ * процесс воркера после ответа мёртв всегда, поэтому `idle` был бы враньём:
+ * простаивать нечему. Переживает прогон только транскрипт сессии на диске, и
+ * `agent-run resume` поднимает его — это ровно `parked`. Раньше узнать это
+ * можно было, лишь попробовав `resume` и получив отказ.
+ */
+function lifecycleOf(m) {
+  if (!m) return null;
+  if (m.status === "running") return "running";
+  return m.sessionId ? "parked" : "done";
+}
+
+/*
+ * Заявка создаётся через `link`, а не через `open(…, "wx")`.
+ *
+ * `open` с "wx" атомарен только в части создания: pid дописывается следующей
+ * операцией, и между ними файл существует, но пуст. Конкурент в этом окне
+ * читал пустоту, получал `Number("") === 0`, считал заявку трупом, сносил её и
+ * заходил внутрь. Замер 2026-08-26, 25 раундов по 8 процессов: 2 раунда с
+ * двойным вызовом хука и 9 раундов, где проигравший затёр `delivered` своим
+ * `pending`. То есть ровно те две гарантии, ради которых заявка и заведена.
+ *
+ * `link` переносит уже готовый файл: он либо появляется целиком, либо падает с
+ * EEXIST. Пустой заявки не существует в принципе, поэтому нечитаемая заявка
+ * теперь означает «занято», а не «труп». Чтобы это не превратилось в вечную
+ * блокировку, нечитаемая заявка всё же признаётся трупом, но по возрасту — с
+ * запасом от потолка одного хука.
+ */
+function claimDelivery(id) {
+  const p = claimPath(id);
+  const tmp = `${p}.${process.pid}`;
+  for (let i = 0; i < 2; i++) {
+    try {
+      fs.writeFileSync(tmp, `${process.pid}\n`);
+      fs.linkSync(tmp, p);
+      fs.rmSync(tmp, { force: true });
+      return true;
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      if (e.code !== "EEXIST") return false;
+      let holder = 0;
+      try { holder = Number(fs.readFileSync(p, "utf8").trim()) || 0; } catch { return false; }
+      if (holder && holder !== process.pid && alive(holder)) return false;
+      if (!holder) {
+        // Нечитаемая заявка — «занято», а не труп: пустой её оставить может только
+        // чужая старая версия скрипта. Чтобы это не стало вечной блокировкой,
+        // такая заявка всё же снимается, но по возрасту.
+        let ageMs = 0;
+        try { ageMs = Date.now() - fs.statSync(p).mtimeMs; } catch { return false; }
+        if (ageMs < HOOK_TIMEOUT_MS * 2) return false;
+      }
+      fs.rmSync(p, { force: true }); // труп заявки: держатель мёртв или заявка протухла
+    }
+  }
+  return false;
+}
+const releaseDelivery = (id) => fs.rmSync(claimPath(id), { force: true });
+
+function deliveryPayload(m, attempt) {
+  return {
+    id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort,
+    status: m.status, worker_status: m.workerStatus ?? null, lifecycle: lifecycleOf(m),
+    cwd: m.cwd, started: m.started, finished: m.finished ?? null,
+    summary: m.result?.summary ?? null, result: m.result ?? null,
+    logs: runDir(m.id), attempt,
+  };
+}
+
+/*
+ * Одна попытка доставки. Возвращает "delivered" | "failed" | null (нечего
+ * делать сейчас: хука нет, прогон жив, уже доставлено, не пришёл срок, заявку
+ * держит другой процесс).
+ */
+function deliverPending(m, opts = {}) {
+  if (!m || !m.onFinish) return null;
+  if (m.status === "running") return null;
+  // Провал по квоте — не конец работы: fallback уже перезапустил бриф на
+  // другом вендоре, и завершение придёт от нового прогона. Доставлять здесь
+  // значит сообщить родителю о неудаче, которой не было.
+  if (m.status === "failed-quota") return null;
+  const d = m.delivery || { state: "pending", attempts: 0, nextAttemptAt: null, lastError: null, deliveredAt: null };
+  if (d.state === "delivered" && !opts.force) return null;
+  if (d.state === "failed" && !opts.force) return null;
+  if (d.nextAttemptAt && Date.parse(d.nextAttemptAt) > Date.now() && !opts.force) return null;
+  if (!claimDelivery(m.id)) return null;
+  try {
+    // Перечитать под заявкой: между проверкой и захватом другой процесс мог
+    // доставить. Это и есть точка, где обеспечивается «ровно однажды».
+    const fresh = metaOf(m.id);
+    if (!fresh || !fresh.onFinish) return null;
+    const fd = fresh.delivery || d;
+    if (fd.state === "delivered" && !opts.force) return null;
+    const attempt = (fd.attempts || 0) + 1;
+    const payload = deliveryPayload(fresh, attempt);
+    const summary = (payload.summary || "").slice(0, 500);
+    // Payload кладётся и файлом: однострочному хуку читать stdin неудобно, а
+    // не прочитать его нельзя — см. трактовку EPIPE ниже.
+    const payloadPath = path.join(runDir(fresh.id), "delivery-payload.json");
+    writeJson(payloadPath, payload);
+    const r = spawnSync("/bin/sh", ["-c", fresh.onFinish], {
+      encoding: "utf8", timeout: HOOK_TIMEOUT_MS, input: JSON.stringify(payload, null, 2),
+      env: { ...process.env,
+        DK_RUN_ID: fresh.id, DK_ROLE: fresh.role, DK_BACKEND: fresh.backend, DK_MODEL: fresh.model,
+        DK_STATUS: fresh.status, DK_WORKER_STATUS: fresh.workerStatus ?? "", DK_LIFECYCLE: payload.lifecycle,
+        DK_CWD: fresh.cwd, DK_SUMMARY: summary, DK_RESULT_PATH: path.join(runDir(fresh.id), "result.json"),
+        DK_LOGS_DIR: runDir(fresh.id), DK_ATTEMPT: String(attempt), DK_PAYLOAD_PATH: payloadPath,
+        DELEGATE_KIT_DEPTH: "", // хук — не воркер, ему запускать воркеров можно
+      },
+    });
+    /*
+     * Судит код возврата, а не факт ошибки записи в stdin.
+     *
+     * Payload уходит хуку на stdin, но однострочный хук (`notify-send …`,
+     * `echo … >> log`) stdin не читает и выходит сразу — труба рвётся, и
+     * `spawnSync` возвращает EPIPE при полностью успешном хуке. Так первый же
+     * стенд 2026-08-26 записал сработавшую доставку как провал и увёл её в
+     * ретраи: 26 раундов из 40. Замер показал, что `status` при EPIPE
+     * достоверен (0 у `echo ok`, 3 у `exit 3`), поэтому решает он.
+     */
+    const ok = r.status === 0 && (!r.error || r.error.code === "EPIPE");
+    const next = { state: "pending", attempts: attempt, nextAttemptAt: null, lastError: null, deliveredAt: fd.deliveredAt ?? null };
+    if (ok) { next.state = "delivered"; next.deliveredAt = nowIso(); }
+    else {
+      next.lastError = String(r.error?.message || `hook exited ${r.status}${r.signal ? ` (${r.signal})` : ""}: ${(r.stderr || "").trim().slice(0, 300)}`);
+      if (attempt >= DELIVERY_MAX_ATTEMPTS) next.state = "failed";
+      else next.nextAttemptAt = new Date(Date.now() + DELIVERY_BACKOFF_MS[Math.min(attempt - 1, DELIVERY_BACKOFF_MS.length - 1)]).toISOString();
+    }
+    fresh.delivery = next; saveMeta(fresh);
+    return ok ? "delivered" : "failed";
+  } finally { releaseDelivery(m.id); }
+}
+
+/* Сверка живости плюс попытка доставки — то, что должен сделать любой, кто
+   вообще посмотрел на прогон. Раньше здесь стоял голый `reconcile`.
+   Перечитать после доставки обязательно: `deliverPending` пишет своё состояние
+   в свежую копию с диска, и объект в памяти остаётся с прежним `delivery`.
+   Без этого `list` печатал «pending» для доставки, которую сам же и выполнил. */
+function touch(m) { const r = reconcile(m); const outcome = deliverPending(r); return outcome ? (metaOf(r.id) || r) : r; }
+
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+/* Дренаж, пока супервизор жив: ретраить по расписанию, но не дольше бюджета —
+   иначе процесс висит ради хука, который, возможно, не поднимется никогда. */
+async function deliverWithRetries(id) {
+  const start = Date.now();
+  for (;;) {
+    const m = metaOf(id);
+    if (!m || !m.onFinish) return;
+    const outcome = deliverPending(m);
+    const d = metaOf(id)?.delivery;
+    if (!d || d.state === "delivered" || d.state === "failed") return;
+    if (outcome === null && !d.nextAttemptAt) return; // заявку держит кто-то другой
+    const waitMs = d.nextAttemptAt ? Date.parse(d.nextAttemptAt) - Date.now() : 1000;
+    if (Date.now() - start + Math.max(waitMs, 0) > SUPERVISOR_DRAIN_BUDGET_MS) return;
+    await sleep(Math.max(waitMs, 500));
+  }
+}
+
+function cmdNotify(argv) {
+  const id = argv._[1];
+  const force = argv.force === true || argv.force === "true";
+  const ids = id ? [id] : (fs.existsSync(RUNS_DIR) ? fs.readdirSync(RUNS_DIR).sort() : []);
+  if (id && !metaOf(id)) die(`unknown run ${id}`);
+  const rows = [];
+  for (const rid of ids) {
+    const m = reconcile(metaOf(rid));
+    if (!m || !m.onFinish) continue;
+    const before = m.delivery?.state ?? "pending";
+    const outcome = deliverPending(m, { force });
+    const after = metaOf(rid)?.delivery ?? null;
+    if (outcome === null && !force && before === after?.state && !id) continue;
+    rows.push({ id: rid, role: m.role, status: m.status, lifecycle: lifecycleOf(m), delivery: after });
+  }
+  process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
+}
+
 const QUOTA_RE = /usage limit|rate limit|limit reached|out of (extra )?usage|quota|too many requests|overloaded|429/i;
 const isQuotaError = (m, stderr) => {
   const txt = [m?.result?.summary, stderr].filter(Boolean).join("\n");
@@ -503,6 +726,9 @@ async function cmdRun(opts, resumeOf = null) {
   const lensText = lens ? `${LENSES[lens]} ${LENS_TAIL}\n\n` : "";
   prompt = (resumeOf ? "" : `${ROLE_PREAMBLE[role]}\n\n${lensText}`) + prompt + RESULT_CONTRACT;
   const timeoutMin = Number(opts.timeout || ROLE_TIMEOUT_MIN[role] || 60);
+  const onFinishRaw = opts["on-finish"] ?? (resumeOf ? resumeOf.onFinish : null);
+  if (onFinishRaw === true) die(`--on-finish needs a shell command, e.g. --on-finish 'echo "$DK_ROLE $DK_STATUS" >> ~/dk-done.log'`);
+  const onFinish = onFinishRaw ? String(onFinishRaw) : null;
 
   if (opts.detach && !opts._supervise) {
     const id = newId();
@@ -527,7 +753,7 @@ async function cmdRun(opts, resumeOf = null) {
   const built = buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId: resumeOf?.sessionId });
   built.args = built.args.map((a) => (a === "__OUT__" ? outFile : a));
   const panel = opts.panel && opts.panel !== true ? String(opts.panel) : null;
-  const meta = { id, role, backend, model, effort, cwd, write, preset: route.preset, dispatch: "external", lens, panel, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null };
+  const meta = { id, role, backend, model, effort, cwd, write, preset: route.preset, dispatch: "external", lens, panel, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null, onFinish, delivery: onFinish ? { state: "pending", attempts: 0, nextAttemptAt: null, lastError: null, deliveredAt: null } : null };
   if (write) meta.lock = acquireWriteLock(cwd, id, role);
   fs.writeFileSync(path.join(runDir(id), "prompt.md"), prompt);
 
@@ -583,6 +809,7 @@ async function cmdRun(opts, resumeOf = null) {
       await cmdRun(next, null);
       return;
     }
+    await deliverWithRetries(id);
     if (!opts._supervise) printResult(id); process.exit(0);
   });
 
@@ -593,16 +820,16 @@ async function cmdRun(opts, resumeOf = null) {
 }
 
 function printResult(id) {
-  const m = reconcile(metaOf(id)); if (!m) die(`unknown run ${id}`);
-  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, fallback_from: m.fallbackFrom ?? undefined,
+  const m = touch(metaOf(id)); if (!m) die(`unknown run ${id}`);
+  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, lifecycle: lifecycleOf(m), delivery: m.delivery ?? undefined, fallback_from: m.fallbackFrom ?? undefined,
     note: m.fallbackFrom ? `ran on ${m.backend} because the other vendor hit a usage limit${m.role === "reviewer" || m.role === "verifier" ? "; check that the reviewer is still a different vendor than the author" : ""}` : undefined, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
 
 function cmdList() {
   if (!fs.existsSync(RUNS_DIR)) return console.log("[]");
-  const rows = fs.readdirSync(RUNS_DIR).sort().map(metaOf).filter(Boolean).map(reconcile).map((m) => {
-    return { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, status: m.status, worker_status: m.workerStatus ?? null, cwd: m.cwd, started: m.started, finished: m.finished ?? null };
+  const rows = fs.readdirSync(RUNS_DIR).sort().map(metaOf).filter(Boolean).map(touch).map((m) => {
+    return { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, status: m.status, lifecycle: lifecycleOf(m), worker_status: m.workerStatus ?? null, delivery: m.delivery ? m.delivery.state : undefined, cwd: m.cwd, started: m.started, finished: m.finished ?? null };
   });
   console.log(JSON.stringify(rows, null, 2));
 }
@@ -637,6 +864,7 @@ switch (sub) {
   case "wait": await cmdWait(argv._[1], argv.timeout); break;
   case "kill": cmdKill(argv._[1]); break;
   case "log": cmdLog(argv._[1], argv._[2]); break;
+  case "notify": cmdNotify(argv); break;
   default:
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
@@ -647,14 +875,28 @@ switch (sub) {
   agent-run preset [${Object.keys(PRESETS).join("|")}]     show or persist the default preset
   agent-run run --role <${Object.keys(ROLES).join("|")}> [--preset P] [--backend claude|codex] [--model M] [--effort E]
                 [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout] [--fallback auto|none]
+                [--on-finish CMD]                       shell command run when this run reaches a terminal state
                 [--lens spec|correctness|standards] [--panel ID]      (reviewer only: lens preamble; panel id groups runs in the ledger)
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
+  agent-run notify [<id>] [--force]       deliver any completion still pending (retries due ones); no id drains all
 
 --timeout on \`run\` is a fuse against a hung worker, not a schedule; without it the role decides:
 ${Object.entries(ROLE_TIMEOUT_MIN).map(([r, t]) => `${r} ${t}m`).join(", ")}. A run killed by it ends as
 "timeout", a run whose supervisor died as "orphaned" — both keep whatever the worker committed, so read
 the worktree before rerunning. list, status and wait all reconcile a dead supervisor.
+
+--on-finish is how the parent learns a worker finished without polling — the point of it is a worker
+from the OTHER family, where no harness reports back. The command runs once per run, with the full
+result JSON on stdin and DK_RUN_ID, DK_ROLE, DK_BACKEND, DK_MODEL, DK_STATUS, DK_WORKER_STATUS,
+DK_LIFECYCLE, DK_CWD, DK_SUMMARY, DK_RESULT_PATH, DK_LOGS_DIR, DK_ATTEMPT in the environment.
+A non-zero exit is a failed delivery, retried at 5s/15s/45s/120s: by the live supervisor first, then by
+whoever next runs list, status, wait or notify. Exactly once — a claim file keeps two processes from
+both delivering. After ${DELIVERY_MAX_ATTEMPTS} attempts the delivery is marked failed and only
+\`notify <id> --force\` will retry it. A run that failed on quota delivers nothing: its fallback rerun does.
+
+lifecycle is orthogonal to status: running, or parked when the session can still be revived with
+\`resume\`, or done when it cannot. status says how it ended, lifecycle whether you can go back to it.
 
 Presets move the token-heavy roles (planner, implementer, researcher) to one family; reviewer and
 verifier always stay on the other family than the author. Precedence: --preset > DELEGATE_KIT_PRESET
