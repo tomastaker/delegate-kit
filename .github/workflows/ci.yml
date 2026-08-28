@@ -6,18 +6,20 @@ on:
   pull_request:
 
 jobs:
-  shell:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Syntax check
-        run: |
-          for f in skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-run skills/delegate-kit/scripts/agent-wt; do
-            bash -n "$f"
-          done
-      - name: shellcheck
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bash syntax + shellcheck
         run: |
           sudo apt-get install -y -qq shellcheck >/dev/null
-          shellcheck -S warning skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-run skills/delegate-kit/scripts/agent-wt
+          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt"
+          for f in $files; do bash -n "$f"; done
+          shellcheck -S warning $files
+      - name: Node syntax
+        run: node --check skills/delegate-kit/scripts/agent-run
       - name: Validate result schema JSON
         run: python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
