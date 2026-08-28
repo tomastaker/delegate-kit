@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: |
+          for f in skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-run skills/delegate-kit/scripts/agent-wt; do
+            bash -n "$f"
+          done
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y -qq shellcheck >/dev/null
+          shellcheck -S warning skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-run skills/delegate-kit/scripts/agent-wt
+      - name: Validate result schema JSON
+        run: python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
