@@ -6,20 +6,55 @@ on:
   pull_request:
 
 jobs:
-  check:
+  validate-skill:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Bash syntax + shellcheck
+      - name: Validate compact skill package
         run: |
-          sudo apt-get install -y -qq shellcheck >/dev/null
-          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt"
-          for f in $files; do bash -n "$f"; done
-          shellcheck -S warning $files
-      - name: Node syntax
-        run: node --check skills/delegate-kit/scripts/agent-run
-      - name: Validate result schema JSON
-        run: python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+
+          skill = Path("skills/delegate-kit/SKILL.md")
+          assert skill.is_file(), "SKILL.md is missing"
+
+          text = skill.read_text(encoding="utf-8")
+          assert text.startswith("---\n"), "SKILL.md must start with frontmatter"
+          _, frontmatter, body = text.split("---", 2)
+
+          required = {
+              "name: delegate-kit",
+              "description:",
+              "license: MIT",
+              "compatibility:",
+          }
+          missing = sorted(item for item in required if item not in frontmatter)
+          assert not missing, f"missing frontmatter fields: {missing}"
+          assert body.strip(), "SKILL.md body is empty"
+
+          size = len(text.encode("utf-8"))
+          assert size <= 12_000, f"SKILL.md is too large for a routinely loaded policy: {size} bytes"
+
+          required_terms = [
+              "DIRECT",
+              "SCOUT",
+              "SINGLE",
+              "PARALLEL",
+              "SEQUENTIAL",
+              "Independent review",
+          ]
+          missing_terms = [term for term in required_terms if term not in text]
+          assert not missing_terms, f"missing decision concepts: {missing_terms}"
+
+          forbidden_runtime_terms = [
+              "agent-run",
+              "main-claude",
+              "main-codex",
+              "claude -p",
+              "codex exec",
+          ]
+          present = [term for term in forbidden_runtime_terms if term in text]
+          assert not present, f"provider-specific runtime leaked into core skill: {present}"
+
+          print(f"Validated {skill} ({size} bytes)")
+          PY
