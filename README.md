@@ -2,16 +2,16 @@
 
 # delegate-kit
 
-**Your coding agent hands work to fresh workers — and the review always comes from the other model family.**
+**Your coding agent picks the shape of a task before doing it, hands the big ones to fresh workers, and gets the result reviewed by a fresh pair of eyes — from the other model family whenever that family's CLI is installed.**
 
-One skill for Claude Code, Codex CLI and T3 Code. Your logins, your subscriptions, no new harness.
+One skill for Claude Code, T3 Code and Codex CLI. Your logins, your subscriptions, no new harness.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-parent%20or%20worker-blueviolet)](https://claude.com/claude-code)
-[![Codex CLI](https://img.shields.io/badge/Codex%20CLI-parent%20or%20worker-black)](https://github.com/openai/codex)
-[![T3 Code](https://img.shields.io/badge/T3%20Code-parent-orange)](https://t3.chat)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-coordinator%20or%20worker-blueviolet)](https://claude.com/claude-code)
+[![Codex CLI](https://img.shields.io/badge/Codex%20CLI-coordinator%20or%20worker-black)](https://github.com/openai/codex)
+[![T3 Code](https://img.shields.io/badge/T3%20Code-coordinator-orange)](https://t3.chat)
 
-[Install](#install) · [How it works](#how-it-works) · [Usage](#usage) · [The rules](#the-rules-that-do-the-work) · [Docs](skills/delegate-kit/)
+[Install](#install) · [How it works](#how-it-works) · [Shapes](#the-shapes) · [Review](#review) · [Usage](#usage) · [Docs](skills/delegate-kit/)
 
 </div>
 
@@ -19,124 +19,95 @@ One skill for Claude Code, Codex CLI and T3 Code. Your logins, your subscription
 
 ## What you get
 
-You talk to one agent. When a task is big enough, it plans with the strongest model, implements in an isolated git worktree, and gets the change **reviewed by a model from the other vendor** — then reports back with what was checked and what was not. Small tasks it just does. You decide which subscription pays with one word.
+You talk to one agent — the **coordinator**. It keeps the plan, the briefs, the integration and the answer. For every task it picks a *shape*: do it here, send one scout, plan first, one worker, two or three in parallel, or a sequence. Workers are fresh sessions that read the repository themselves. When the change is non-trivial, a reviewer that did not write it reads the frozen diff — on the other model family when that CLI is there, on a fresh session of the same family when it is not, and the report says which.
 
 | Without delegate-kit | With delegate-kit |
 |---|---|
-| The agent delegates on a whim: a one-line fix spawns a 50k-token worker; a ten-module change starts with no plan. | **Triage first.** Up to ~3 files it does itself. Prose requirements or >1 module → a planner before any code. Signals, not moods. |
-| Codex reviews Codex. Claude reviews Claude. Same blind spots twice. | **Independent review, always.** The reviewer is from the other model family than the author. No preset, no quota pressure moves that. |
-| Workers write into your working tree. Two of them collide. | **Writers live in worktrees**, one per worktree, locked. Your tree stays yours; you merge what you accept. |
-| Every worker is a full headless CLI session, even one the agent could have spawned itself. | **Native inside the family, external across it.** A Claude parent spawns Claude workers natively; only the Codex reviewer is a separate session — the cheapest shape there is. |
-| One subscription runs out and the work stops. | **Presets.** `main-claude` or `main-codex` moves the heavy roles to the family with quota left; the reviewer stays independent; on a rate limit the other vendor picks up once, and says so. |
-| "Review this" means one opinion, however big the diff. | **Review depth from the diff.** Small → one reviewer. Large or risky → a panel of lenses (spec / correctness / standards), proposed with numbers, run on your yes. |
+| Delegation on a whim: a one-line fix spawns a 50k-token worker; a ten-module change starts with no plan. | **Shape first.** ≤ ~3 files → done here. Prose requirements or > 1 module → a planner before any code. Numbers, not moods. |
+| Three workers on one coupled feature come back as merge conflicts and two designs. | **Worker count = independent outcomes.** Coupled edits stay in one pair of hands; parallel needs disjoint write scopes. |
+| Codex reviews Codex. Claude reviews Claude. Same blind spots twice. | **Independent review.** The other family when available; otherwise a fresh session, reported as such. No preset moves it. |
+| Workers write into your working tree. Two of them collide. | **Writers live in worktrees**, one per worktree, locked. You merge what you accept. |
+| A worker from the other vendor is pretended to be a subagent, then lost when the parent stops looking. | **Native inside the family, external across it** — named as such. External workers are launched once, collected once, and can report back through a hook. |
+| One subscription runs out and the work stops. | **Presets.** `main-claude` / `main-codex` move the heavy roles; the reviewer follows the author; on a rate limit the other vendor picks up once, and says so. |
 | The worker says "done". Was anything checked? | **One JSON contract.** `status`, `changes`, `checks_run`, `not_verified`, `findings`, `questions`. A check that did not run is reported as not run. |
-
-<details>
-<summary><b>Table of contents</b></summary>
-
-- [What you get](#what-you-get)
-- [How it works](#how-it-works)
-- [The rules that do the work](#the-rules-that-do-the-work)
-  - [Independence is the first slot](#1-independence-is-the-first-slot)
-  - [Native inside the family, external across it](#2-native-inside-the-family-external-across-it)
-  - [Presets: which subscription pays](#3-presets-which-subscription-pays)
-  - [Review depth: one reviewer or a panel of lenses](#4-review-depth-one-reviewer-or-a-panel-of-lenses)
-- [The roles](#the-roles)
-- [Install](#install)
-- [Usage](#usage)
-- [The tools](#the-tools)
-- [What it will not do](#what-it-will-not-do)
-- [Layout](#layout)
-- [License and acknowledgments](#license-and-acknowledgments)
-
-</details>
 
 ## How it works
 
 ```
-you ──► parent (Claude Code / T3 / Codex)   "change the tariff logic in the billing module"
+you ──► coordinator (Claude Code / T3 / Codex)   "change the tariff logic in the billing module"
               │
-              │  triage: small? → done here.  big / ambiguous / risky? → delegate
+              │  shape: DIRECT? done here.  PLAN / SINGLE / PARALLEL / SEQUENTIAL? →
               │  spec → .scratch/tariffs/spec.md
               ▼
-        planner ────────────────► strongest model, read-only ──────────► plan + blocking questions
+        planner ─────────────► native, strongest model, read-only ─────► plan + blocking questions
               │
-        agent-wt create tariffs   (git worktree + write-lock)
+        agent-wt create tariffs        (git worktree + write-lock)
               │
-        implementer ────────────► workhorse model, writes, sandboxed ──► commits on dk/tariffs
+        implementer ─────────► native subagent or external CLI, sandboxed ─► commits on dk/tariffs
               │
-        agent-wt diff tariffs     (the frozen diff)
-        agent-run route --role reviewer --diff   → single | panel | led, with the numbers
+        agent-wt diff tariffs          (the frozen diff)
+        agent-run route --role reviewer --diff   → single | panel | led, family, cost
               │
-        reviewer(s) ────────────► THE OTHER FAMILY than the author ───► findings
+        reviewer(s) ─────────► the OTHER family if its CLI is installed,
+              │                otherwise a fresh session of the same family (reported) ─► findings
               │
-              │  mechanical finding → parent fixes.  real one → same implementer, resumed.
-              │  dispute → a command first, then a verifier (third party).
+              │  mechanical → coordinator fixes.  real → same implementer, resumed.
+              │  dispute → a command first, then a verifier.
               ▼
-        merge / PR · agent-wt remove tariffs · report: done, checked, not checked, open
+        merge / PR · agent-wt remove tariffs · report: done, checked, not checked, open, who reviewed
 ```
 
-Every worker starts empty. It never sees your conversation; it gets a brief and reads the repository itself, then returns one JSON object. That is the whole interface — and it is why briefs matter more than models.
+Two kinds of worker, never confused:
 
-## The rules that do the work
+- **Native** — a subagent of the host, same family as the coordinator. Steerable, visible, cheap. Claude Code / T3 use the `Agent` tool with the `dk-*` roles; Codex uses `spawn_agent`. [`references/hosts.md`](skills/delegate-kit/references/hosts.md).
+- **External** — a headless `claude -p` / `codex exec` session of the other family, started by `agent-run`. Launched with a complete brief, collected once, resumed by id. This is the only way to get the other family, and the skill says so instead of pretending it is a subagent. [`references/external.md`](skills/delegate-kit/references/external.md).
 
-### 1. Independence is the first slot
+## The shapes
 
-A review by the same family that wrote the code shares its blind spots. So the reviewer is **always** the other family than the author — a Codex-written change is reviewed by Claude, a Claude-written one by Codex, and a change the parent wrote itself goes to the other vendor too. A verifier, when one is needed, is a third party again. Nothing in the skill can flip this; it is the one property delegation is for.
-
-### 2. Native inside the family, external across it
-
-A parent can only spawn its own family natively:
-
-| Worker family | parent = Claude Code / T3 | parent = Codex |
+| Shape | When | Who |
 |---|---|---|
-| Claude (`fable`, `opus`, `sonnet`, `haiku`) | **native** — `Agent` tool, `dk-<role>` | external — `agent-run run --backend claude` |
-| GPT (`gpt-5.6-sol`, `-terra`, `-luna`) | external — `agent-run run --backend codex` | **native** — `spawn_agent`, `dk-<role>` |
+| **DIRECT** | ≤ ~3 files, clear requirements; explanations; micro-fixes; anything destructive or production-adjacent | the coordinator, in the foreground |
+| **SCOUT** | the hard part is finding: a large repo, several plausible causes, docs to quote | one read-only worker, then decide again |
+| **PLAN** | prose requirements, ambiguity, > 1 module or > ~10 files; any question that ends in a verdict | planner, read-only, strongest model |
+| **SINGLE** | one vertical slice too big for DIRECT | one implementer in its own worktree |
+| **PARALLEL** | 2–3 slices with disjoint write scopes and stable interfaces | one implementer per slice, each in a worktree |
+| **SEQUENTIAL** | one result changes the next task's assumptions (schema → API → UI) | one worker at a time, resumed |
 
-Native is cheaper and steerable, so it is the default inside the family. External is what `agent-run` adds: an enforced read-only sandbox, the strict JSON schema, a ledger, a resumable run id, a timeout, detached parallel writers and the cross-vendor quota fallback — worth going external for even inside the family when one of those matters. `agent-run route --role <role>` answers all of it in one call. Reasoning: [`references/dispatch.md`](skills/delegate-kit/references/dispatch.md).
+Limits: 2 writers, 4 workers at once, delegation depth 1. Repository size changes the cost of *finding* context, not the number of writers.
 
-### 3. Presets: which subscription pays
+## Review
 
-| Preset | planner | implementer | researcher | reviewer / verifier |
-|---|---|---|---|---|
-| `auto` (default) | Claude | Codex | Claude | the other family than the author |
-| `main-claude` | Claude | Claude | Claude | the other family than the author |
-| `main-codex` | Codex | Codex | Codex | the other family than the author |
+The author of a non-trivial change does not certify it. The reviewer is a fresh, read-only worker that gets the frozen diff and the spec. Independence, in order of preference:
 
-A preset moves the token-heavy roles. It never moves the reviewer — so `main-claude` implies a Codex reviewer and `main-codex` a Claude one. That is cheap: a review is one read-only pass over a frozen diff, a fraction of what the implementer spends.
+1. **The other family than the author.** `agent-run route` picks it whenever that CLI is installed. A Claude-written change gets a Codex reviewer, a Codex-written one a Claude reviewer, and a change the coordinator wrote itself goes to the other vendor too.
+2. **A fresh session of the author's family.** What `route` returns when the other CLI is missing — marked `independent: false` — so the review still happens and the report names which kind ran.
 
-Say it in words ("let Codex implement this", "main model Claude"), type it (`/delegate-kit main-claude`, `$delegate-kit main-codex`), or persist it (`agent-run preset main-claude`). Your own per-role defaults go in `~/.delegate-kit/config.json` — `"roles": { "planner": { "claude": ["fable", "xhigh"] } }` — so "always plan on xhigh" is one edit, and the repository's table stays the default for everyone else.
-
-### 4. Review depth: one reviewer, or a panel of lenses
-
-A second reviewer with the same brief finds the same things twice. What a second slot should buy is a second **lens**:
+Depth is measured from the diff, not from a feeling:
 
 | Depth | Reviewers | When |
 |---|---|---|
-| `single` | one, the other family | the default — small diff, one module, no risk zone |
-| `panel` | two lenses, parallel and blind to each other | ~400+ changed lines, 10+ files, 2+ modules, or a risk zone |
-| `led` | a review lead plans → three lenses → the lead merges | ~1200+ lines, 25+ files, 3+ modules |
+| `single` | one, slot A | the default — small diff, one module, no risk zone |
+| `panel` | A + B, parallel and blind to each other | large diff, several modules, or a risk zone |
+| `led` | a lead plans, three reviewers, the lead merges | very large or risky diffs |
 
-Lenses: `spec` (does it do what was asked), `correctness` (is it right), `standards` (the repo's conventions plus a fixed smell baseline). Slot A is the other family; slot B may be the author's family, because independence is already paid for. `agent-run route --role reviewer --diff review.diff` measures the frozen diff and prints the depth, the composition and the cost. A panel is **proposed with those numbers and run on your yes** — it is the one place the skill spends more than one session on one step. Rules, lenses and the baseline: [`references/review.md`](skills/delegate-kit/references/review.md).
+Lenses: `spec`, `correctness`, `standards`. Slot A carries independence; slot B may sit on the author's family. A panel is **proposed with the numbers and run on your yes**. Rules, lenses and the smell baseline: [`references/review.md`](skills/delegate-kit/references/review.md).
 
 ## The roles
 
-| Role | Does | Default | Access |
+| Role | Does | Default model | Access |
 |---|---|---|---|
-| **planner** | Ordered steps, files per step, risks, blocking vs non-blocking questions, the checks that prove completion | Claude **Fable** high · Codex **Sol** xhigh | read-only |
-| **implementer** | One vertical slice in its own worktree; runs the acceptance checks; commits on its branch | Codex **Sol** high · Claude **Opus** high for UI-heavy work | write, sandboxed, one per worktree |
-| **reviewer** | Reads the frozen diff against the spec; findings with severity, kind, lens, file:line, evidence, fix | **the other family than the author**, high effort | read-only |
-| **review-lead** | On a large diff: plans the reviewers before, merges their findings after. Two short calls | the planner's family at its strongest | read-only |
-| **verifier** | Settles one disputed or high-risk finding: confirmed / refuted / needs-human, with evidence | a third party to the reviewer, strongest tier | read-only |
-| **researcher** | Quotes current documentation with URL and date; marks what it could not verify | Claude **Sonnet** medium · Codex **Terra** medium | read-only, web |
+| **planner** | ordered steps, files per step, risks, blocking questions, the checks that prove completion | Claude **Fable** high · Codex **Sol** xhigh | read-only |
+| **implementer** | one vertical slice in its own worktree; runs the acceptance checks; commits on its branch | Codex **Sol** high · Claude **Opus** high for UI-heavy work | write, sandboxed, one per worktree |
+| **reviewer** | reads the frozen diff against the spec; findings with severity, kind, lens, file:line, evidence, fix | the other family than the author when available | read-only |
+| **review-lead** | plans a `led` review before, merges the findings after; two short calls | the planner's family, strongest | read-only |
+| **verifier** | settles one disputed or high-risk finding that a command cannot | third party to the reviewer | read-only |
+| **researcher** | quotes current documentation with URL and date; marks what it could not verify | Claude **Sonnet** medium · Codex **Terra** medium | read-only, web |
 
-And the non-role that matters most: **the parent itself** — up to ~3 files, a clear spec, low risk, micro-fixes after review, explanations, diagnoses, and everything destructive or production-adjacent, in the foreground, with you watching.
-
-Why these defaults: planning is one read-only call whose mistakes propagate everywhere, so it gets the strongest model. Within a family, raising *effort* moves review and planning quality more than raising the tier — which is also why the strongest Codex role is Sol at `xhigh` (the CLI offers Sol, Terra and Luna; there is no `pro` worker). A small model on a micro-task never pays back the ~50k-token start-up cost of a worker. Reasoning per role: [`references/roles.md`](skills/delegate-kit/references/roles.md).
+Presets `main-claude` / `main-codex` move planner, implementer and researcher; the reviewer follows the author. Reasoning per role: [`references/roles.md`](skills/delegate-kit/references/roles.md).
 
 ## Install
 
-**Prerequisites:** bash, git, jq, node ≥ 20; `claude` and/or `codex` installed and logged in with your own account.
+**Prerequisites:** the policy and native workers need nothing beyond the host. Workers from the other family need that CLI installed and logged in with your own account, plus bash, git, jq, node ≥ 20.
 
 ```bash
 # 1. the skill
@@ -147,7 +118,7 @@ ln -s ~/dev/delegate-kit/skills/delegate-kit ~/.agents/skills/delegate-kit
 ln -s ../../.agents/skills/delegate-kit ~/.claude/skills/delegate-kit
 ln -s ../../.agents/skills/delegate-kit ~/.codex/skills/delegate-kit
 
-# 2. the safety hook + the native role definitions (backs up your settings, shows the diff first)
+# 2. the native role definitions + the safety hook (backs up your settings, shows the diff first)
 ~/.agents/skills/delegate-kit/hooks/install.sh --dry-run
 ~/.agents/skills/delegate-kit/hooks/install.sh          # or --claude / --codex / --hooks-only / --agents-only
 
@@ -155,38 +126,36 @@ ln -s ../../.agents/skills/delegate-kit ~/.codex/skills/delegate-kit
 echo 'export PATH="$HOME/.agents/skills/delegate-kit/scripts:$PATH"' >> ~/.zshrc
 ```
 
-Restart running `claude` / `codex` sessions afterwards.
+Restart running `claude` / `codex` sessions afterwards. The symlinks make the policy live: a `git pull` is the whole update; re-run `install.sh` after a change to the roles. To make the triage effectively always-on, add one line to your global instructions:
 
-The symlinks make the policy live: `SKILL.md`, the scripts and the references are read straight out of your clone, so a `git pull` is the whole update. The native role definitions are the exception — a harness discovers subagents only in `~/.claude/agents/` and `~/.codex/config.toml` — which is why `install.sh` exists: it symlinks the Claude ones and splices the Codex block between markers, replacing it on every re-run. After pulling a change to the roles, run it again.
+```text
+Before repository work that spans modules or more than ~3 files, apply delegate-kit; a DIRECT verdict needs no announcement.
+```
 
-**Uninstall:** `hooks/uninstall.sh` (removes the hook, the `dk-*` symlinks and the `[agents.dk-*]` block), remove the three skill symlinks, and `rm -rf ~/.delegate-kit` if you do not want to keep the ledger, the preset and the run logs.
+**Uninstall:** `hooks/uninstall.sh`, remove the three skill symlinks, and `rm -rf ~/.delegate-kit` if you do not want to keep the ledger, the preset and the run logs.
 
 ## Usage
 
-Work as usual. The parent loads the skill when a task spans modules, needs a review, or you say "delegate", "plan this", "review this"; invoke it explicitly with `/delegate-kit` in Claude Code or `$delegate-kit` in Codex.
-
-**What you say and what it does:**
+Work as usual. The coordinator loads the skill when a task spans modules, needs a review, or you say "delegate", "scout", "plan this", "review this", "second opinion"; invoke it explicitly with `/delegate-kit` in Claude Code or `$delegate-kit` in Codex.
 
 | You say | Effect |
 |---|---|
-| "delegate", "plan this", "review this", "subagent" | the skill triggers |
-| "let Codex implement", "main model Claude", `main-claude` / `main-codex` | preset for this task — the heavy roles move, the reviewer stays independent |
+| "delegate", "plan this", "review this", "subagent", "scout" | the skill triggers |
+| "let Codex implement", "main model Claude", `main-claude` / `main-codex` | preset for this task — the heavy roles move, the reviewer follows the author |
 | "plan with Fable", "review with Sol" | one model for one role; the preset is untouched |
 | "panel", "two reviewers", "led" | your yes to a deeper review, given in advance |
 | "this is mechanical" / "a refactor" / "UI work" | `--kind` — always `single` / lenses `correctness`+`standards` / implementer on Claude under `auto` |
 
-**What it decides alone:** whether to delegate at all; the family, model, effort and native-vs-external per role; the reviewer's family (always the other one); review depth from the diff; a command before a verifier; one cross-vendor retry on a rate limit.
+**What it decides alone:** the shape; family, model, effort and native-vs-external per role; the reviewer's family (the other one when available); review depth from the diff; a command before a verifier; one cross-vendor retry on a rate limit.
 
 **Where it stops and asks:** before a panel (with the numbers); when a worker returns `blocked` with questions; when your working tree is dirty and the task touches that work; before any command `gate.sh` classes as dangerous.
-
-If you interview yourself first (a grill skill, a spec session), save the outcome as `.scratch/<task>/spec.md` and the workers are pointed at it instead of a retold version.
 
 <details>
 <summary><b>Driving the scripts by hand</b></summary>
 
 ```bash
 agent-run route --role implementer --preset main-claude   # who runs this, where, how
-agent-run route --role reviewer --diff review.diff         # how deep the review should go
+agent-run route --role reviewer --diff review.diff         # how deep the review should go, on which family
 agent-run preset main-claude                               # persist the preset; alone: show the effective table
 
 agent-run run --role planner --brief .scratch/tariffs/brief.md
@@ -198,49 +167,49 @@ agent-run resume <implementer-id> --prompt "Fix findings 1 and 3 from the review
 agent-run list | status <id> | wait <id> | kill <id> | log <id> | notify [<id>]
 ```
 
-Two implementers in parallel: `--detach` on each, then either block on `agent-run wait <id>` or have each one report for itself with `--on-finish CMD` — the only channel an external worker has, since no harness announces it. A native writer: `agent-wt lock tariffs` before dispatch, `agent-wt release tariffs` after. `--help` on either script is the reference for flags.
+Two implementers in parallel: `--detach` on each, then `agent-run wait <id>` or `--on-finish CMD` so each reports for itself. A native writer: `agent-wt lock tariffs` before dispatch, `agent-wt release tariffs` after. `--help` on either script is the reference for flags.
 
 </details>
 
 ## The tools
 
-**`agent-run`** — routes, starts, resumes, waits for, lists and kills workers, and delivers each completion to an `--on-finish` hook exactly once, retried and surviving a dead supervisor. Applies role defaults; read-only roles run `codex -s read-only` / `claude --permission-mode plan`, writers `workspace-write` / `acceptEdits`, never the dangerous modes. Writers must be in a git worktree, one per worktree, at most 2 writers and 4 workers at once. Delegation depth is 1: a worker cannot start workers. Every run returns the JSON contract and is archived under `~/.delegate-kit/runs/<id>/`; the ledger `~/.delegate-kit/ledger.jsonl` records model, effort, preset, lens, tokens, duration and outcome per run.
+**`agent-run`** — routes, starts, resumes, waits for, lists and kills external workers, and delivers each completion to an `--on-finish` hook exactly once. Applies role defaults; read-only roles run `codex -s read-only` / `claude --permission-mode plan`, writers `workspace-write` / `acceptEdits`, never the dangerous modes. Falls the reviewer back to a fresh native worker when the other CLI is missing. Every run is archived under `~/.delegate-kit/runs/<id>/`; the ledger records model, effort, preset, lens, tokens, duration and outcome.
 
-**`agent-wt`** — git worktrees next to the repo (`<repo>.worktrees/<name>`, branch `dk/<name>`): create, status, frozen diff against the recorded base, lock (for a native writer), release, remove, cleanup of merged worktrees.
+**`agent-wt`** — git worktrees next to the repo (`<repo>.worktrees/<name>`, branch `dk/<name>`): create, status, frozen diff, lock, release, remove, cleanup.
 
-**`agents/dk-*.md` · `references/codex-agents.toml`** — the six roles as native subagent definitions, one set per harness, carrying model, effort and tool list.
+**`agents/dk-*.md` · `references/codex-agents.toml`** — the six roles as native subagent definitions, one set per harness.
 
-**`hooks/gate.sh`** — a PreToolUse hook in both CLIs. `sudo`, `rm -rf`, service and firewall changes, certificates, destructive SQL, force-push, history-destroying git, destructive commands over SSH, disk operations — require your explicit confirmation. On Claude Code that is the normal approval prompt; Codex hooks cannot prompt, so the command is denied with an instruction to confirm with you and re-run prefixed `DELEGATE_KIT_CONFIRMED=1`.
+**`hooks/gate.sh`** — a PreToolUse hook in both CLIs: `sudo`, `rm -rf`, service and firewall changes, certificates, destructive SQL, force-push, history-destroying git require your explicit confirmation.
 
 ## What it will not do
 
-- **Steer an external worker mid-run.** Headless sessions run to completion; you read the result and resume with a follow-up. Native subagents can be steered — one more reason the skill prefers them inside the family.
-- **Sandbox.** The gate is a list of known dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree. A native read-only role is read-only by instruction and tool list, not by sandbox — dispatch externally when that boundary matters.
-- **Make delegation cheap.** A worker is a full session. The skill exists so you pay that price only when independence, parallelism or a clean context is worth it.
-- **Record native dispatches in the ledger.** Only external runs are there; a model comparison has to be run externally on both sides.
-- **Mix the families.** Claude is `fable | opus | sonnet | haiku`, Codex is `gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna`; `agent-run` rejects a name from the family that does not match `--backend`. When vendors rename models, update the table at the top of `scripts/agent-run` and the two role-definition sets.
+- **Steer an external worker mid-run.** Headless sessions run to completion; you read the result and resume with a follow-up. That is why the skill prefers native workers inside the family and never calls an external one a subagent.
+- **Sandbox.** The gate is a list of known dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree.
+- **Make delegation cheap.** A worker is a full session; the shapes exist so you pay that price only for independence, parallelism or a clean context.
+- **Run a swarm.** Two writers, four workers. Larger fleets need an unusually clear partition and your explicit ask.
+- **Mix the families.** `agent-run` rejects a model name from the family that does not match `--backend`.
 
-Workers run through the official CLIs with the logins you already have — ordinary use of Claude Code and Codex. Do not wrap this into a product that routes other people's subscriptions; that is what the vendors prohibit.
+Workers run through the official CLIs with the logins you already have — ordinary use of Claude Code and Codex. Do not wrap this into a product that routes other people's subscriptions.
 
 ## Layout
 
 ```
 skills/delegate-kit/
-  SKILL.md                      the policy the parent reads
-  agents/dk-*.md                the six roles as native Claude Code subagents
-  references/codex-agents.toml  the six roles as native Codex subagents
-  references/dispatch.md        native vs external, presets — the reasoning behind agent-run route
+  SKILL.md                      the policy the coordinator reads: shapes, brief, worktree, review, report
+  references/hosts.md           native dispatch per host; git with parallel writers
+  references/external.md        the other family through agent-run: preflight, collecting, presets, limits
   references/roles.md           families, tiers, reasoning per role, prompt hints, tuning
   references/review.md          review depth, lenses, panel composition, merge rules, smell baseline
   references/brief-template.md  how to write a brief
   references/result-schema.json the JSON contract
+  references/codex-agents.toml  the six roles as native Codex subagents
+  agents/dk-*.md                the six roles as native Claude Code subagents
   scripts/agent-run             route / preset / run / resume / list / status / wait / kill / log / notify
   scripts/agent-wt              create / list / status / diff / lock / release / remove / cleanup
-  hooks/gate.sh                 PreToolUse safety gate (Claude Code + Codex)
-  hooks/install.sh, uninstall.sh
+  hooks/gate.sh, install.sh, uninstall.sh
   tests/delivery.sh             completion-delivery bench; --race N for the concurrency hammer
 ```
 
 ## License and acknowledgments
 
-MIT. The review lenses `spec` and `standards` and the smell baseline are adapted from [mattpocock/skills — code-review](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md) (MIT), which keeps its two axes separate for the same reason this skill keeps reviewers blind to each other: one angle must not mask another. README structure after [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
+MIT. The review lenses `spec` and `standards` and the smell baseline are adapted from [mattpocock/skills — code-review](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md) (MIT). The host dispatch table and the git-coordination facts borrow from [Hyperskills](https://github.com/hyperb1iss/hyperskills); the one-worker-per-outcome rule from [Superpowers](https://github.com/obra/superpowers). README structure after [Best-README-Template](https://github.com/othneildrew/Best-README-Template).
