@@ -4,7 +4,7 @@ How many reviewers a diff deserves, which angle each one takes, and how their fi
 
 ## Independence is the first slot, not the whole review
 
-One reviewer from the other family than the author buys **independence**: two families share fewer blind spots than one. That is the invariant of this skill and nothing moves it — not a preset, not a panel, not quota.
+One reviewer from the other family than the author buys **independence**: two families share fewer blind spots than one. No preset, panel or quota pressure moves slot A off the other family. The one thing that does is availability: when that family's CLI is not installed, `route` places slot A as a fresh read-only worker of the author's family, marks it `independent: false`, and the report names which one ran. A fresh context is still a real review; the other family is the stronger one.
 
 A second reviewer with the same brief buys almost nothing: the obvious findings come back twice and the subtle ones stay missed, because both reviewers looked from the same angle. What a second slot should buy is a second **lens**. So a panel is composed as lenses first, families second:
 

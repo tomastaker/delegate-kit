@@ -1,6 +1,6 @@
 ---
 name: dk-reviewer
-description: delegate-kit REVIEWER — read-only review of a frozen diff against its spec, returning findings with severity, kind, file, line, evidence and a suggested fix. Dispatch natively from a Claude Code parent only when the change was written by the GPT family; a Claude-written change must be reviewed by `agent-run run --role reviewer --backend codex`.
+description: delegate-kit REVIEWER — read-only review of a frozen diff against its spec, returning findings with severity, kind, file, line, evidence and a suggested fix. Dispatch natively from a Claude Code parent when the change was written by the GPT family, or when the Codex CLI is not installed (then report the review as same-family); otherwise a Claude-written change is reviewed by `agent-run run --role reviewer --backend codex`.
 model: opus
 effort: high
 tools: Read, Glob, Grep, Bash

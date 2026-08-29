@@ -1,6 +1,6 @@
 # Roles: who, why, and how to prompt them
 
-`agent-run route --role <role>` prints the default for any role; this file is the reasoning, so you can deviate deliberately. Where a worker runs and which subscription pays are in `dispatch.md`; review depth and lenses in `review.md`.
+`agent-run route --role <role>` prints the default for any role; this file is the reasoning, so you can deviate deliberately. Where a worker runs and which subscription pays are in `external.md`; review depth and lenses in `review.md`.
 
 ## The two families
 
@@ -21,7 +21,7 @@ The Codex CLI is offered `sol`, `terra` and `luna` only (`~/.codex/models_cache.
 |---|---|---|---|
 | planner | `fable` high / `gpt-5.6-sol` xhigh | preset | read-only |
 | implementer | `opus` high / `gpt-5.6-sol` high | preset; `--kind ui` → Claude under `auto` | write, in a worktree |
-| reviewer | `opus` high / `gpt-5.6-sol` high | **the other family than the author** | read-only |
+| reviewer | `opus` high / `gpt-5.6-sol` high | **the other family than the author** when its CLI is installed; else a fresh worker of the author's family, reported | read-only |
 | review-lead | `fable` high / `gpt-5.6-sol` xhigh | the planner's family | read-only |
 | verifier | `fable` high / `gpt-5.6-sol` xhigh | third party to the reviewer | read-only |
 | researcher | `sonnet` medium / `gpt-5.6-terra` medium | preset | read-only, web |
@@ -51,7 +51,7 @@ The Codex CLI is offered `sol`, `terra` and `luna` only (`~/.codex/models_cache.
 ## reviewer
 
 - **Default** the other family than the author, high effort. After a Codex implementer: `claude` opus high. After a Claude implementer: `codex` gpt-5.6-sol high. UX/product review: `claude` opus.
-- **Why the other family**: the same family reviewing itself shares blind spots. Independence is the value — and it is the first slot of a panel, never something a preset moves.
+- **Why the other family**: the same family reviewing itself shares blind spots. Independence is the value — the first slot of a panel, never something a preset moves. When the other CLI is missing, `route` falls back to a fresh native reviewer and says so; a fresh context is the floor, the other family the preference.
 - **Depth and lenses**: one reviewer by default; a panel of two or three lenses for large or risky diffs, proposed with numbers and run only on the user's yes. `review.md`.
 - **Read-only.** Give it the frozen diff (`agent-wt diff`) and the spec. Ask for findings with severity, file:line, the claim, the evidence, and a suggested fix. Ask it to separate "spec mismatch" from "standards" from "nit". Ask it not to restate the diff.
 - **Effort**: high by default; xhigh only in risk zones (auth, payments, migrations).
@@ -88,7 +88,7 @@ Almost never as workers, though. The start-up cost dominates — a worker that r
 
 - Routine orchestration: Opus 5 / Sol / Sonnet 5 / Terra. The parent writes briefs and reads reports; that does not need the top model.
 - Switch the parent up (Fable / Sol xhigh) for a grill session, an architecture decision, or a hard bug the parent must reason about itself. Switch back afterwards.
-- The parent's family decides which roles can be native at all (`dispatch.md`).
+- The parent's family decides which roles can be native at all (`external.md`, `hosts.md`).
 
 ## Tuning
 

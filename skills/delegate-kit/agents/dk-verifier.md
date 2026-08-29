@@ -1,6 +1,6 @@
 ---
 name: dk-verifier
-description: delegate-kit VERIFIER — settles one disputed or high-risk review finding as confirmed, refuted or needs-human, with evidence. Rare and read-only. Dispatch natively from a Claude Code parent when the reviewer was on the GPT family; otherwise use `agent-run run --role verifier --backend codex`.
+description: delegate-kit VERIFIER — settles one disputed or high-risk review finding as confirmed, refuted or needs-human, with evidence. Rare and read-only. Dispatch natively from a Claude Code parent when the reviewer was on the GPT family or the Codex CLI is not installed; otherwise use `agent-run run --role verifier --backend codex`.
 model: fable
 effort: high
 tools: Read, Glob, Grep, Bash
