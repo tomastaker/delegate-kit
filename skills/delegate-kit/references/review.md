@@ -59,6 +59,13 @@ Each reads *what it is* → *how to fix*:
 - **Middle Man** — a class or function that mostly delegates onward → cut it, call the real target.
 - **Refused Bequest** — a subclass ignoring most of what it inherits → drop the inheritance, compose.
 
+Four structural checks sit alongside the smells, adapted from addyosmani/agent-skills `code-review-and-quality` (MIT), under the same two rules:
+
+- **Relocated Complexity** — a refactor that moves logic without reducing the number of concepts a reader must hold → prefer the restructuring that makes a branch, mode or layer disappear; delete an abstraction before polishing it.
+- **Leaked Feature Logic** — feature-specific code landing in a shared or general-purpose module, or a near-duplicate of an existing canonical helper → move it to the owning layer; reuse the canonical helper.
+- **Unnamed Remedy** — a finding that says "too complex" without a move → name the restructuring: a typed model or dispatcher for a conditional chain, orchestration split from business logic, a pass-through wrapper deleted, a helper extracted.
+- **Bulk Dependency Bump** — several packages upgraded in one change, changelog unread, lockfile diff unreviewed → one dependency per change, changelog read for behaviour changes, lockfile diff in the review, green suite before and after.
+
 ## The lead
 
 At `led` depth the **review lead** (`dk-review-lead`; strongest model of the preset's planner family) is called twice, and both calls are short because it reads *around* the diff, not through it:

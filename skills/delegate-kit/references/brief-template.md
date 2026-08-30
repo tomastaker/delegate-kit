@@ -13,6 +13,9 @@ The same brief serves both dispatch paths: `--brief` for an external `agent-run`
 ## Spec
 <path to .scratch/<task>/spec.md, or 3-8 bullet requirements>
 
+## Ticket
+<path to .scratch/<task>/issues/NN-slug.md when the slice has one — the brief points at it, it does not restate it>
+
 ## Acceptance criteria
 - <observable check 1, ideally a command: `pnpm test -- tariffs`>
 - <check 2>
