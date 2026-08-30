@@ -136,6 +136,7 @@ function reconcile(m) {
   return m;
 }
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
+const cliAvailable = (backend) => sh("/bin/sh", ["-c", `command -v ${backend === "codex" ? "codex" : "claude"}`]).status === 0;
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -489,16 +490,34 @@ function resolveRoute(opts = {}) {
     backend = opts.backend;
   }
 
+  const write = ROLES[role].write;
+  let dispatch = parent && parent === backend ? "native" : "external";
+  // Independence prefers the other family, but is not gated on it: when that family's CLI
+  // is not installed, the reviewer/verifier lands on the parent's own family as a fresh,
+  // read-only native worker, and `independence` records which one the caller got.
+  let independence = ["reviewer", "verifier"].includes(role) ? (backend === author ? "same-family" : "other-family") : undefined;
+  let fellBack = false;
+  if (dispatch === "external" && !cliAvailable(backend)) {
+    const userPinned = opts.backend && opts.backend !== true && !opts._composed;
+    if (parent && ["reviewer", "verifier"].includes(role) && !userPinned) {
+      why.push(`the ${backend} CLI is not installed, so the ${role} falls back to a fresh native ${parent} worker — say so in the report`);
+      backend = parent; dispatch = "native"; fellBack = true;
+      independence = backend === author ? "same-family" : "other-family";
+    } else {
+      why.push(`the ${backend} CLI is not installed; install it or pass --backend ${otherBackend(backend)}`);
+    }
+  }
+  if (dispatch === "native") {
+    if (!fellBack) why.push(`the parent (${parent}) is in the same family, so it can spawn this worker natively`);
+  } else {
+    why.push(parent
+      ? `the parent (${parent}) cannot spawn a ${backend} worker natively, so it goes through agent-run`
+      : "no parent harness detected (pass --parent), so external dispatch is assumed");
+  }
+
   const [defModel, defEffort] = ROLES[role][backend];
   const model = opts.model && opts.model !== true ? opts.model : defModel;
   const effort = opts.effort && opts.effort !== true ? opts.effort : defEffort;
-  const write = ROLES[role].write;
-  const dispatch = parent && parent === backend ? "native" : "external";
-  why.push(dispatch === "native"
-    ? `the parent (${parent}) is in the same family, so it can spawn this worker natively`
-    : parent
-      ? `the parent (${parent}) cannot spawn a ${backend} worker natively, so it goes through agent-run`
-      : "no parent harness detected (pass --parent), so external dispatch is assumed");
 
   const external = ["agent-run run", `--role ${role}`, `--backend ${backend}`, `--model ${model}`, `--effort ${effort}`,
     write ? "--cwd <worktree>" : "", "--brief <brief.md>"].filter(Boolean).join(" ");
@@ -515,7 +534,7 @@ function resolveRoute(opts = {}) {
             ? "take the lock yourself: `agent-wt create <name>` then `agent-wt lock <name> --label dk-implementer`, name the worktree path in the prompt, and `agent-wt release <name>` when the subagent returns"
             : "role definition lives in ~/.codex/config.toml under [agents.dk-*]; install it with hooks/install.sh" };
 
-  return { role, preset, parent: parent ?? "unknown", backend, model, effort, write, dispatch, invoke, why,
+  return { role, preset, parent: parent ?? "unknown", author, backend, model, effort, write, dispatch, independence, invoke, why,
     prefer_external_when: dispatch === "native" ? [
       "you need the strict JSON result contract, a ledger entry or a resumable run id",
       "you need a hard timeout, a detached parallel writer, or automatic cross-vendor quota fallback",
@@ -583,10 +602,11 @@ function cmdRoute(argv) {
   const suggested = stats ? suggestDepth(stats, kind) : null;
   let depth = argv.depth && argv.depth !== true ? String(argv.depth) : (suggested ? suggested.depth : "single");
   if (!DEPTHS.includes(depth)) die(`--depth must be ${DEPTHS.join("|")} (got ${depth})`);
-  const author = base.backend === "claude" ? "codex" : "claude"; // base already placed the reviewer opposite the author
+  const author = base.author;
   const reviewers = reviewComposition(depth, author, kind).map((r) => {
-    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, depth: undefined, diff: undefined });
-    return { ...r, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke };
+    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, _composed: true, depth: undefined, diff: undefined });
+    const note = rr.why.find((w) => w.includes("falls back"));
+    return { ...r, backend: rr.backend, independent: rr.backend !== author, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke, ...(note ? { note } : {}) };
   });
   const lead = depth === "led" ? (() => { const l = resolveRoute({ ...argv, role: "review-lead", backend: undefined, depth: undefined, diff: undefined }); return { backend: l.backend, model: l.model, effort: l.effort, dispatch: l.dispatch, invoke: l.invoke }; })() : null;
   const sessions = reviewers.length + (lead ? 2 : 0);
@@ -899,7 +919,8 @@ lifecycle is orthogonal to status: running, or parked when the session can still
 \`resume\`, or done when it cannot. status says how it ended, lifecycle whether you can go back to it.
 
 Presets move the token-heavy roles (planner, implementer, researcher) to one family; reviewer and
-verifier always stay on the other family than the author. Precedence: --preset > DELEGATE_KIT_PRESET
+verifier follow the author: the other family when its CLI is installed, otherwise a fresh native
+worker of the parent's family (route marks it independent:false). Precedence: --preset > DELEGATE_KIT_PRESET
 > ${CONFIG_FILE} > auto. Per-role model/effort defaults can be overridden in the same file under
 "roles": { "<role>": { "claude": ["model","effort"], "codex": ["model","effort"] } }; \`agent-run preset\` shows the effective table.
 

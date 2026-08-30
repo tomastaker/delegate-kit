@@ -21,5 +21,10 @@ jobs:
           shellcheck -S warning $files
       - name: Node syntax
         run: node --check skills/delegate-kit/scripts/agent-run
+      - name: SKILL.md stays a policy, not a manual
+        run: |
+          size=$(wc -c < skills/delegate-kit/SKILL.md)
+          echo "SKILL.md: $size bytes"
+          test "$size" -le 8000
       - name: Validate result schema JSON
         run: python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
