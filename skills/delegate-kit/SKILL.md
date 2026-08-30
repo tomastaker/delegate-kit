@@ -29,9 +29,11 @@ Worker count equals the number of independent outcomes. Coupled edits stay in on
 
 **Routing trap:** "research" that ends in a recommendation is PLAN, not SCOUT. A quote is research; a verdict is planning, and a wrong verdict propagates downstream.
 
-## 2. Spec and preset
+## 2. Spec, tickets and preset
 
-- A grill/interview output or requirements longer than a paragraph → `.scratch/<task>/spec.md`; workers are pointed at it.
+- A grill/interview output or requirements longer than a paragraph → `.scratch/<task>/spec.md`; workers are pointed at it. An interview is not finished until the coordinator restates it in 5–8 lines — outcome, who it is for, what success looks like, the binding constraint, **out of scope** — and the user says yes explicitly; "sounds good" is not yes.
+- Multi-slice work gets **tickets**: `/to-tickets` (mattpocock/skills) writes one file per tracer-bullet slice to `.scratch/<task>/issues/NN-slug.md` with `Blocked by`, `Status` and acceptance checkboxes. One ticket = one brief. The **frontier** — tickets whose blockers are all done — is the next work; a fresh session reads the directory and continues without being told where things stand.
+- **Never overwrite a plan with unchecked items.** Replanning the same work edits the files in place; different work arriving while a plan is open is a question for the user, not a silent replacement.
 - The user's words set the **preset**: any phrasing naming who carries the bulk of the work ("main model Claude", "let Codex implement") is `main-claude` / `main-codex`; naming a model for one role ("plan with Fable") is a per-call override. Presets move planner, implementer, researcher; the reviewer follows the author. `references/external.md`.
 
 ## 3. Route
@@ -67,6 +69,12 @@ agent-run route --role reviewer --diff review.diff [--author-backend self]
 ## 7. Integrate and report
 
 Merge or open a PR per repo conventions; `agent-wt release <task>`, `agent-wt remove <task>`. Report: what was done, what was checked, what was not, open questions, which preset ran, which family reviewed at which depth. A check that did not run is reported as not run; a worker's "done" is evidence to inspect.
+
+When the brief came from a ticket: once the acceptance commands have run in the coordinator's own hands, tick the ticket's checkboxes and set `Status: done`. The report then ends with the frontier — `closed X of Y, next: <ticket>` — so the ticket files and the answer never disagree.
+
+## 8. Handoff
+
+Switching machine, harness or model family mid-task: write `.scratch/handoff/<YYYY-MM-DD>-<task>.md` — where the work stands, what is blocked and on whom, which skills the next session should call, and pointers (spec, tickets, commits, diffs) instead of copies of them. No secrets. The next session starts from that file plus the tickets directory. A handoff transfers ownership; nothing comes back to integrate.
 
 ## Worker contract
 
