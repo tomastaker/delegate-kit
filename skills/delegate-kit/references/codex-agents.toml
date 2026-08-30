@@ -7,7 +7,8 @@
 # These roles are for the case where the *parent* is Codex and the worker should
 # stay in the GPT family: the parent spawns them with its own `spawn_agent` tool
 # instead of paying for a fresh `codex exec` session. A worker from the Claude
-# family is always started externally with `agent-run run --backend claude`.
+# family is started externally with `agent-run run --backend claude`; when that
+# CLI is missing, `agent-run route` falls the reviewer back to dk-reviewer here.
 #
 # Models: the Codex CLI exposes gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna
 # (check `~/.codex/models_cache.json`). There is no `gpt-5.6-pro` worker, so the
