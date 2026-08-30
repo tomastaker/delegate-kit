@@ -1,6 +1,6 @@
 ---
 name: delegate-kit
-description: Pick the shape of a task before doing it — DIRECT, SCOUT, PLAN, SINGLE, PARALLEL or SEQUENTIAL — and get a non-trivial change reviewed by a fresh worker, on the other model family when its CLI is installed. Use when the work spans modules or > ~3 files, when the user says "delegate", "subagent", "worker", "scout", "plan this", "review this", "second opinion", or names a preset ("main-claude", "main-codex").
+description: Pick the shape of a task before doing it — DIRECT, SCOUT, PLAN, SINGLE, PARALLEL or SEQUENTIAL — and get a non-trivial change reviewed by a fresh worker, on the other model family when its CLI is installed. Use for a feature or refactor described in prose, work across several modules, a question that ends in a verdict ("which do we adopt"), or when the user says "delegate", "subagent", "worker", "scout", "plan this", "review this", "second opinion", or names a preset ("main-claude", "main-codex").
 license: MIT
 compatibility: Policy runs anywhere. Native workers need a host with subagents (Claude Code, T3 Code, Codex). Workers from the other family need that family's CLI logged in, plus bash, git, node >= 20, jq.
 ---
