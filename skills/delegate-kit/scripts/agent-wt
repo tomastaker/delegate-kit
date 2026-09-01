@@ -39,6 +39,10 @@ base_ref_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(c
 
 lock_info() {
   local lf; lf=$(lock_file "$1" 2>/dev/null) || { echo "no-lock"; return; }
+  lock_state "$lf"
+}
+lock_state() { # state of one lock file: unlocked | locked(...) | stale-lock(...)
+  local lf=$1
   [ -f "$lf" ] || { echo "unlocked"; return; }
   local kind pid; kind=$(jq -r '.kind // "process"' "$lf"); pid=$(jq -r '.pid // empty' "$lf")
   # A native lock has no process behind it: the parent holds it on behalf of its own
@@ -124,12 +128,15 @@ acquire_caps_mutex() {
   done
   die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
 }
+# Every linked worktree of this checkout, not only the ones under wt_base_dir: an
+# `agent-run --cwd` writer may sit in any worktree, and its lock lives in the same place.
 locked_worktrees() {
-  local base; base=$(wt_base_dir); [ -d "$base" ] || return 0
-  for p in "$base"/*/; do
-    [ -d "$p" ] || continue
-    local n; n=$(basename "$p")
-    [[ "$(lock_info "$n")" == locked* ]] && echo "$n"
+  local common; common="$(git rev-parse --git-common-dir)"; common="$(cd "$common" && pwd)"
+  [ -d "$common/worktrees" ] || return 0
+  local lf
+  for lf in "$common"/worktrees/*/delegate-kit.lock; do
+    [ -f "$lf" ] || continue
+    [[ "$(lock_state "$lf")" == locked* ]] && basename "$(dirname "$lf")"
   done
   return 0
 }

@@ -134,7 +134,8 @@ const die = (msg, code = 1) => {
 const nowIso = () => new Date().toISOString();
 const newId = () => `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
 const readJson = (p, fallback = null) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fallback; } };
-const writeJson = (p, v) => fs.writeFileSync(p, JSON.stringify(v, null, 2) + "\n");
+// tmp + rename: a concurrent reader sees the old file or the new one, never a truncated one
+const writeJson = (p, v) => { const tmp = `${p}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify(v, null, 2) + "\n"); fs.renameSync(tmp, p); };
 const runDir = (id) => path.join(RUNS_DIR, id);
 const metaOf = (id) => readJson(path.join(runDir(id), "meta.json"));
 const saveMeta = (m) => writeJson(path.join(runDir(m.id), "meta.json"), m);
@@ -273,13 +274,37 @@ function acquireCapsMutex(timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try { fs.writeFileSync(CAPS_MUTEX, String(process.pid), { flag: "wx" }); capsMutexHeld = true; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
-    const holder = Number(fs.readFileSync(CAPS_MUTEX, "utf8").trim() || 0);
+    let holder; try { holder = Number(fs.readFileSync(CAPS_MUTEX, "utf8").trim() || 0); } catch (e) { if (e.code === "ENOENT") continue; throw e; }
     if (!holder || !alive(holder)) { try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} continue; }
     if (Date.now() > deadline) die(`another agent-run (pid ${holder}) has held ${CAPS_MUTEX} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the file`);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
 }
-function releaseCapsMutex() { if (!capsMutexHeld) return; capsMutexHeld = false; try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} }
+/*
+ * Второй мьютекс — репозитория, общий с `agent-wt lock`: каталог
+ * <common .git>/delegate-kit.caps.lock, mkdir атомарен. Без него внешний и
+ * нативный писатель одного репозитория считали слоты под разными замками и
+ * оба проходили при cap 1. agent-run берёт сначала машинный, потом
+ * репозиторный; agent-wt только репозиторный — цикла нет.
+ */
+let repoMutexHeld = null;
+function acquireRepoMutex(cwd, timeoutMs = 15_000) {
+  const r = sh("git", ["rev-parse", "--git-common-dir"], { cwd });
+  if (r.status !== 0) return;
+  const dir = path.join(path.resolve(cwd, r.stdout.trim()), "delegate-kit.caps.lock");
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, "pid"), String(process.pid)); repoMutexHeld = dir; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
+    let holder = 0; try { holder = Number(fs.readFileSync(path.join(dir, "pid"), "utf8").trim() || 0); } catch {}
+    if (!holder || !alive(holder)) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} continue; }
+    if (Date.now() > deadline) die(`another agent-run or agent-wt (pid ${holder}) has held ${dir} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the directory`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+}
+function releaseCapsMutex() {
+  if (repoMutexHeld) { const d = repoMutexHeld; repoMutexHeld = null; try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
+  if (!capsMutexHeld) return; capsMutexHeld = false; try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {}
+}
 
 // Refuse before anything is spawned. Native locks (`agent-wt lock`) of the repository of
 // cwd count as workers and as writers; external runs count machine-wide.
@@ -873,7 +898,7 @@ async function cmdRun(opts, resumeOf = null) {
   if (opts._supervise) SUPERVISED = { id: opts.id, role, backend, model, effort, cwd, write };
   // The initial supervised start runs under the mutex its parent still holds; every other
   // start (foreground, detach parent, quota fallback) takes it itself.
-  if (!opts._supervise || opts._fallbackFrom) acquireCapsMutex();
+  if (!opts._supervise || opts._fallbackFrom) { acquireCapsMutex(); if (write) acquireRepoMutex(cwd); }
   checkCaps(caps, write, cwd);
   if (write) { const conflict = writeLockConflict(cwd, null); if (conflict) die(conflict); }
 
