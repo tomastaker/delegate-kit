@@ -21,7 +21,7 @@ CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null ||
 # a worktree lock from there is denied outright — no confirmation prefix reopens it, so this
 # check sits before the confirmation bypass below.
 AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null || true)
-if [ -n "$AGENT" ] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(`[:space:]/])(agent-run[[:space:]]+(run|resume)|agent-wt[[:space:]]+lock)([[:space:]]|$)'; then
+if [ -n "$AGENT" ] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(`[:space:]/"'"'"'])(agent-run["'"'"']?[[:space:]]+(run|resume)|agent-wt["'"'"']?[[:space:]]+lock)([[:space:]]|$)'; then
   msg="delegate-kit gate: delegation depth is 1 — a worker ($AGENT) does not start workers or take worktree locks. Return what you have; the coordinator dispatches."
   jq -cn --arg m "$msg" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$m}}'
   exit 0
