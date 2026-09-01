@@ -1,6 +1,6 @@
 # Review: depth, lenses, composition
 
-How many reviewers a diff deserves, which angle each one takes, and how their findings become one list. `agent-run route --role reviewer --diff <file>` applies all of it and prints the result; this file is the reasoning behind that output.
+How many reviewers a diff deserves, which angle each one takes, and how their findings become one list. `agent-run route --role reviewer --diff <file> --author-backend <family|self>` applies all of it and prints the result; this file is the reasoning behind that output.
 
 ## Independence is the first slot, not the whole review
 

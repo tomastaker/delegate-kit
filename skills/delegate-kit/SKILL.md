@@ -59,7 +59,7 @@ Review when: any delegated implementation; a risk zone (auth, payments, migratio
 
 ```
 agent-wt diff <task> > review.diff
-agent-run route --role reviewer --diff review.diff [--author-backend self]
+agent-run route --role reviewer --diff review.diff --author-backend <implementer's family | self>
 ```
 
 `single` runs straight away. `panel` / `led` are **proposed with the printed numbers and run on the user's yes**. Reviewers run in parallel and blind to each other; merge by `references/review.md`.

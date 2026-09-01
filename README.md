@@ -171,7 +171,7 @@ Presets move planner, implementer and researcher; the reviewer follows the autho
 
 ```bash
 agent-run route --role implementer --preset main-claude   # who runs this, where, how
-agent-run route --role reviewer --diff review.diff         # depth, family, cost
+agent-run route --role reviewer --diff review.diff --author-backend codex   # depth, family, cost; self when you wrote it
 agent-run preset main-claude                               # persist; alone: show the effective table
 
 agent-run run --role planner --brief .scratch/tariffs/brief.md
