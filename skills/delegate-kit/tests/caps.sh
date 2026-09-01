@@ -116,10 +116,30 @@ DELEGATE_KIT_MAX_WRITERS=5 "$WT" lock w5 >/dev/null; ok "env пускает" "$?
 ERR=$("$WT" lock w5 --max-writers 2>&1 >/dev/null)
 ok "флаг без числа" "$(has "$ERR" "needs a number")" "yes"
 
-echo "── agent-run видит все четыре нативных lock'а"
+echo "── нативные lock'и входят и в общий счёт воркеров (read-only прогон)"
+ERR=$(node "$AR" run --role researcher --backend codex --cwd "$BASE/repo" --prompt x --no-route-hint 2>&1 >/dev/null); RC=$?
+ok "2 внешних + 5 нативных ≥ 6: отказ" "$RC" "1"
+ok "названы оба вида" "$(has "$ERR" "max 6 active workers reached (2 external: e1, e2; 5 native: w1, w2, w3, w4, w5)")" "yes"
+
+echo "── agent-run видит все пять нативных lock'ов"
 rm -rf "$DELEGATE_KIT_HOME/runs/e1" "$DELEGATE_KIT_HOME/runs/e2"
 run "$WTS/w5" --max-writers 5
 ok "5 нативных ≥ 5: отказ" "$(has "$ERR" "5 native: w1, w2, w3, w4, w5")" "yes"
+
+echo "── гонка: 8 одновременных lock --max-writers 1 дают ровно один lock"
+for w in w1 w2 w3 w4 w5; do "$WT" release "$w" >/dev/null; done
+for w in w6 w7 w8; do "$WT" create "$w" >/dev/null 2>&1; done
+for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" lock "$w" --max-writers 1 >/dev/null 2>&1 & done; wait
+ok "занят один worktree" "$("$WT" list | jq '[.[] | select(.lock | startswith("locked"))] | length')" "1"
+ok "мьютекс отпущен" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "free"
+
+echo "── брошенный мьютекс с мёртвым pid не блокирует"
+mkdir -p "$BASE/repo/.git/delegate-kit.caps.lock"; echo 999999 > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
+"$WT" lock w8 --max-writers 8 >/dev/null; ok "lock прошёл" "$?" "0"
+echo 999999 > "$DELEGATE_KIT_HOME/caps.lock"
+run "$WTS/w8" --max-writers 1
+ok "agent-run снял труп мьютекса и дошёл до потолка" "$(has "$ERR" "concurrent writers reached")" "yes"
+ok "мьютекс agent-run отпущен" "$([ -e "$DELEGATE_KIT_HOME/caps.lock" ] && echo held || echo free)" "free"
 
 echo; echo "Пройдено: $PASS, провалено: $FAIL"
 exit $((FAIL > 0))
