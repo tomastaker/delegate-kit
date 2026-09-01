@@ -80,8 +80,8 @@ On diffs this small, one competent reviewer of either family catches the planted
 ## How it works
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/flow-dark.svg">
-  <img src="assets/flow-light.svg" alt="shape → build in worktrees → the other family reviews → sign-off sheet" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
+  <img src="assets/how-it-works-light.svg" alt="shape → build in worktrees → the other family reviews → sign-off sheet" width="100%">
 </picture>
 
 **1 · Shape.** Before anything else the coordinator names the shape of the task, from numbers, not mood:
