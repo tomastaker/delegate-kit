@@ -729,12 +729,14 @@ function suggestDepth(stats, kind) {
 // Slot A is always the other family than the author: that is where independence comes from and
 // nothing moves it. Slot B may sit on the author's family — independence is already paid for, and
 // the second slot buys a second lens, not a second opinion from the same angle. Slot C alternates.
-function reviewComposition(depth, author, kind) {
-  const other = otherBackend(author);
+// `pinned` is an explicit --backend: it takes slot A, and the alternation runs from there.
+// Before it was honoured, `route --role reviewer --backend X` was silently overridden here.
+function reviewComposition(depth, author, kind, pinned = null) {
+  const first = pinned || otherBackend(author);
   const lenses = kind === "refactor" ? ["correctness", "standards", "spec"] : ["correctness", "spec", "standards"];
   const n = depth === "single" ? 1 : depth === "panel" ? 2 : 3;
-  const families = [other, author, other];
-  return lenses.slice(0, n).map((lens, i) => ({ slot: "ABC"[i], lens, backend: families[i], independent: families[i] !== author }));
+  const families = [first, otherBackend(first), first];
+  return lenses.slice(0, n).map((lens, i) => ({ slot: "ABC"[i], lens, backend: families[i], independent: families[i] !== author, pinned: Boolean(pinned) && i === 0 }));
 }
 
 function cmdRoute(argv) {
@@ -747,10 +749,12 @@ function cmdRoute(argv) {
   let depth = argv.depth && argv.depth !== true ? String(argv.depth) : (suggested ? suggested.depth : "single");
   if (!DEPTHS.includes(depth)) die(`--depth must be ${DEPTHS.join("|")} (got ${depth})`);
   const author = base.author;
-  const reviewers = reviewComposition(depth, author, kind).map((r) => {
-    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, _composed: true, depth: undefined, diff: undefined });
+  const reviewers = reviewComposition(depth, author, kind, argv.backend && argv.backend !== true ? String(argv.backend) : null).map((r) => {
+    // a slot the user pinned with --backend keeps it even when that CLI is missing; composed slots may fall back
+    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, _composed: !r.pinned, depth: undefined, diff: undefined });
     const note = rr.why.find((w) => w.includes("falls back"));
-    return { ...r, backend: rr.backend, independent: rr.backend !== author, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke, ...(note ? { note } : {}) };
+    const { pinned: _p, ...slot } = r;
+    return { ...slot, backend: rr.backend, independent: rr.backend !== author, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke, ...(note ? { note } : {}) };
   });
   const lead = depth === "led" ? (() => { const l = resolveRoute({ ...argv, role: "review-lead", backend: undefined, depth: undefined, diff: undefined }); return { backend: l.backend, model: l.model, effort: l.effort, dispatch: l.dispatch, invoke: l.invoke }; })() : null;
   const sessions = reviewers.length + (lead ? 2 : 0);

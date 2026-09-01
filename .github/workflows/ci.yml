@@ -23,6 +23,8 @@ jobs:
         run: node --check skills/delegate-kit/scripts/agent-run
       - name: Writer caps and detach refusal
         run: bash skills/delegate-kit/tests/caps.sh
+      - name: Routing policy
+        run: bash skills/delegate-kit/tests/route.sh
       - name: SKILL.md stays a policy, not a manual
         run: |
           size=$(wc -c < skills/delegate-kit/SKILL.md)
