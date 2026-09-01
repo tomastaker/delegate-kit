@@ -60,6 +60,7 @@ ok "verifier без codex: same-family" "$(route none --role verifier --parent c
 ok "implementer без codex: внешний с предупреждением, не падает" "$(route none --role implementer --parent claude '.dispatch + " " + (.why|map(select(contains("not installed")))|length|tostring)')" "external 1"
 ok "явный --backend занимает слот A (раньше композиция его затирала)" "$(route both --role reviewer --parent claude --author-backend self --backend claude '.reviewers[0].backend + " " + (.reviewers[0].independent|tostring)')" "claude false"
 ok "явный --backend без CLI не переезжает на другое семейство" "$(route codex-only --role reviewer --parent codex --author-backend self --backend claude '.reviewers[0].backend + " " + .reviewers[0].dispatch')" "claude external"
+ok "закреплённый слот без CLI несёт note про отсутствие" "$(route codex-only --role reviewer --parent codex --author-backend self --backend claude '.reviewers[0].note|contains("not installed")')" "true"
 ok "панель от закреплённого A чередуется дальше" "$(route both --role reviewer --parent claude --author-backend self --backend claude --depth panel '[.reviewers[].backend]|join(" ")')" "claude codex"
 
 echo "── глубина ревью по diff"
