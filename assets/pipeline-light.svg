@@ -9,12 +9,12 @@
   <!-- 1. Shape -->
   <text x="40" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">1 · SHAPE</text>
   <rect x="40" y="52" width="200" height="236" rx="10" fill="#f6f8fa" stroke="#d1d9e0"/>
-  <text x="56" y="80" fill="#1f2328" font-weight="600" font-size="14">The overseer</text>
+  <text x="56" y="80" fill="#1f2328" font-weight="600" font-size="14">Coordinator</text>
   <text x="56" y="98" fill="#59636e">your session, one context</text>
-  <text x="56" y="132" fill="#1f2328">≤ 3 files → does it himself</text>
+  <text x="56" y="132" fill="#1f2328">≤ 3 files → in the session</text>
   <text x="56" y="154" fill="#1f2328">prose, &gt; 1 module → plan first</text>
-  <text x="56" y="176" fill="#1f2328">one slice → one gang</text>
-  <text x="56" y="198" fill="#1f2328">disjoint slices → gangs at once</text>
+  <text x="56" y="176" fill="#1f2328">one slice → one worker</text>
+  <text x="56" y="198" fill="#1f2328">disjoint slices → in parallel</text>
   <text x="56" y="220" fill="#1f2328">schema → API → UI, in turn</text>
   <text x="56" y="256" fill="#59636e">3 writers by default, 8 at most,</text>
   <text x="56" y="272" fill="#59636e">each in its own worktree</text>
@@ -25,14 +25,14 @@
   <text x="300" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">2 · BUILD</text>
   <rect x="300" y="52" width="210" height="104" rx="10" fill="#f6f8fa" stroke="#e8590c" stroke-width="1.5"/>
   <circle cx="322" cy="80" r="7" fill="#e8590c"/>
-  <text x="338" y="85" fill="#1f2328" font-weight="600" font-size="14">Claude gang</text>
+  <text x="338" y="85" fill="#1f2328" font-weight="600" font-size="14">Claude worker</text>
   <text x="316" y="110" fill="#1f2328">worktree dk/tariffs</text>
   <text x="316" y="128" fill="#59636e">native subagent, steerable</text>
   <text x="316" y="145" fill="#59636e">commits on its branch</text>
 
   <rect x="300" y="184" width="210" height="104" rx="10" fill="#f6f8fa" stroke="#8250df" stroke-width="1.5"/>
   <circle cx="322" cy="212" r="7" fill="#8250df"/>
-  <text x="338" y="217" fill="#1f2328" font-weight="600" font-size="14">Codex gang</text>
+  <text x="338" y="217" fill="#1f2328" font-weight="600" font-size="14">Codex worker</text>
   <text x="316" y="242" fill="#1f2328">worktree dk/invoices</text>
   <text x="316" y="260" fill="#59636e">headless codex exec, sandboxed</text>
   <text x="316" y="277" fill="#59636e">commits on its branch</text>
@@ -62,9 +62,9 @@
   <line x1="796" y1="170" x2="824" y2="170" stroke="#59636e" stroke-width="1.5" marker-end="url(#arrow)"/>
 
   <!-- 4. Sign-off -->
-  <text x="830" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">4 · TALLY</text>
+  <text x="830" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">4 · REPORT</text>
   <rect x="830" y="52" width="120" height="236" rx="10" fill="#f6f8fa" stroke="#d1d9e0"/>
-  <text x="846" y="80" fill="#1f2328" font-weight="600" font-size="14">The tally</text>
+  <text x="846" y="80" fill="#1f2328" font-weight="600" font-size="14">The report</text>
   <text x="846" y="112" fill="#1f2328">✓ done</text>
   <text x="846" y="134" fill="#1f2328">✓ checked</text>
   <text x="846" y="156" fill="#1f2328">✗ not checked</text>
@@ -73,5 +73,5 @@
   <text x="846" y="240" fill="#59636e">you merge what</text>
   <text x="846" y="256" fill="#59636e">you accept</text>
 
-  <text x="490" y="322" fill="#59636e" text-anchor="middle" font-size="11">One gang short? The other family's fresh session reviews instead, and the tally says so.</text>
+  <text x="490" y="322" fill="#59636e" text-anchor="middle" font-size="11">Only one CLI installed? A fresh session of the same family reviews instead, and the report says so.</text>
 </svg>
