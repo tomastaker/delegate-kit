@@ -729,8 +729,9 @@ function suggestDepth(stats, kind) {
 // Slot A is always the other family than the author: that is where independence comes from and
 // nothing moves it. Slot B may sit on the author's family — independence is already paid for, and
 // the second slot buys a second lens, not a second opinion from the same angle. Slot C alternates.
-// `pinned` is an explicit --backend: it takes slot A, and the alternation runs from there.
-// Before it was honoured, `route --role reviewer --backend X` was silently overridden here.
+// Slot A is the other family than the author unless the user pins it with --backend: an
+// explicit same-family reviewer is the user's call, reported as independent: false. Before
+// it was honoured, `route --role reviewer --backend X` was silently overridden here.
 function reviewComposition(depth, author, kind, pinned = null) {
   const first = pinned || otherBackend(author);
   const lenses = kind === "refactor" ? ["correctness", "standards", "spec"] : ["correctness", "spec", "standards"];
@@ -752,7 +753,8 @@ function cmdRoute(argv) {
   const reviewers = reviewComposition(depth, author, kind, argv.backend && argv.backend !== true ? String(argv.backend) : null).map((r) => {
     // a slot the user pinned with --backend keeps it even when that CLI is missing; composed slots may fall back
     const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, _composed: !r.pinned, depth: undefined, diff: undefined });
-    const note = rr.why.find((w) => w.includes("falls back"));
+    // keep what the caller must act on: a fallback that happened, or a pinned CLI that is missing
+    const note = rr.why.find((w) => w.includes("falls back") || w.includes("not installed"));
     const { pinned: _p, ...slot } = r;
     return { ...slot, backend: rr.backend, independent: rr.backend !== author, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke, ...(note ? { note } : {}) };
   });
