@@ -17,7 +17,7 @@ Choose external even inside the family when one matters:
 
 - **An enforced sandbox.** External read-only roles run under `claude --permission-mode plan` / `codex -s read-only`. A native role is read-only by instruction and tool list — fine for a reviewer you dispatched yourself, thin as the boundary around an untrusted diff.
 - **The strict result schema, ledger, run id, timeout, quota fallback.** All live in `agent-run`.
-- **The write-lock for free.** `agent-run --cwd` takes it; a native writer needs `agent-wt lock` before and `agent-wt release` after.
+- **The write-lock for free.** `agent-run --cwd` takes it; a native writer needs `agent-wt lock` before and `agent-wt release` after — the lock is also what the writer cap counts (`external.md`).
 
 ## Git with parallel writers
 
