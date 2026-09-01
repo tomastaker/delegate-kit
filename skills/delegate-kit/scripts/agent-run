@@ -15,8 +15,30 @@ const SCHEMA_PATH = path.join(SKILL_DIR, "references", "result-schema.json");
 const STATE_DIR = process.env.DELEGATE_KIT_HOME || path.join(os.homedir(), ".delegate-kit");
 const RUNS_DIR = path.join(STATE_DIR, "runs");
 const LEDGER = path.join(STATE_DIR, "ledger.jsonl");
-const MAX_WORKERS = Number(process.env.DELEGATE_KIT_MAX_WORKERS || 4);
-const MAX_WRITERS = Number(process.env.DELEGATE_KIT_MAX_WRITERS || 2);
+/*
+ * Потолки одновременных воркеров.
+ *
+ * Писатели: 3 по умолчанию — ровно столько, сколько разрешает форма PARALLEL
+ * в SKILL.md; жёсткий потолок 8, выше которого не поднимает ни флаг, ни env.
+ * Между ними — решение на задачу: `--max-writers N` на этот запуск или
+ * `DELEGATE_KIT_MAX_WRITERS` на сессию, после того как координатор назвал
+ * партицию (один тикет на писателя, непересекающиеся write scopes) и
+ * пользователь сказал «да». Число, а не правило, потому что ограничение по
+ * сути — не количество, а способность координатора проинтегрировать и
+ * проревьюить N веток; 8 — предохранитель от разгона, не план.
+ *
+ * Воркеры всего: писатели + 3 места под ревьюеров, исследователя и
+ * верификатора рядом с ними. Раньше это была отдельная константа 4, и она
+ * упиралась в собственные глубины ревью: два писателя плюс `panel` из двух
+ * ревьюеров — впритык, плюс `led` из трёх — уже за потолком.
+ * `DELEGATE_KIT_MAX_WORKERS` по-прежнему переопределяет, но не ниже писателей + 1.
+ *
+ * Считаются внешние прогоны на всей машине и нативные lock'и
+ * (`agent-wt lock`) в репозитории, где запускается писатель.
+ */
+const WRITERS_DEFAULT = 3;
+const WRITERS_CEILING = 8;
+const WORKERS_HEADROOM = 3;
 
 // ---------- role matrix (defaults; override with --preset/--backend/--model/--effort) ----------
 // Model and effort per role, per model family. `--backend` picks the family; which family
@@ -89,7 +111,26 @@ const LENS_TAIL = "Report high-severity problems outside your lens too; another 
 const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single JSON object matching the delegate-kit result schema: {"status":"done|blocked|failed","summary":string,"changes":[{"file","note"}],"checks_run":[string],"not_verified":[string],"plan":[{"step","files","risk"}],"findings":[{"severity","kind","lens","file","line","claim","evidence","suggested_fix","verdict","raised_by"}],"questions":[string],"sources":[{"url","title","date","verified"}],"next_steps":[string]}. Emit every top-level key: use [] for arrays you have nothing for, and null for optional scalars inside items. Do not omit keys — strict output schemas reject partial objects. No prose outside the JSON.`;
 
 // ---------- helpers ----------
-const die = (msg, code = 1) => { process.stderr.write(`agent-run: ${msg}\n`); process.exit(code); };
+/*
+ * Отсоединённый супервизор запущен со stdio «ignore»: всё, что он пишет в
+ * stderr, исчезает. До этой правки провал до записи meta.json — упор в лимит,
+ * занятый worktree — оставлял вызывающего с `{"status":"starting"}` для
+ * прогона, которого не существует. Теперь такой провал сам записывает meta со
+ * статусом failed, и родитель, ждущий meta.json, видит причину.
+ */
+let SUPERVISED = null; // { id, role, backend, model, effort, cwd, write } while running as --_supervise
+const die = (msg, code = 1) => {
+  process.stderr.write(`agent-run: ${msg}\n`);
+  releaseCapsMutex();
+  if (SUPERVISED && !fs.existsSync(path.join(runDir(SUPERVISED.id), "meta.json"))) {
+    const now = nowIso();
+    const result = { status: "failed", summary: `agent-run refused to start the worker: ${msg}`, changes: [], checks_run: [], not_verified: [], findings: [], plan: [], questions: [], sources: [], next_steps: [] };
+    fs.mkdirSync(runDir(SUPERVISED.id), { recursive: true });
+    saveMeta({ ...SUPERVISED, dispatch: "external", status: "failed", pid: process.pid, started: now, finished: now, error: msg, result });
+    writeJson(path.join(runDir(SUPERVISED.id), "result.json"), result);
+  }
+  process.exit(code);
+};
 const nowIso = () => new Date().toISOString();
 const newId = () => `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`;
 const readJson = (p, fallback = null) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return fallback; } };
@@ -163,18 +204,96 @@ function activeRuns() {
   return fs.readdirSync(RUNS_DIR).map(metaOf).filter(Boolean).filter((m) => m.status === "running" && alive(m.pid));
 }
 
-function acquireWriteLock(cwd, id, role) {
+// Why the worktree cannot take this writer, or null. Checked in the parent before the
+// detach fork (so the refusal is visible) and again in the supervisor when it takes the lock.
+function writeLockConflict(cwd, id) {
   const lp = lockPath(cwd);
-  if (!lp) die(`--cwd ${cwd} is not inside a git repository; writers must run in a git worktree`);
+  if (!lp) return `--cwd ${cwd} is not inside a git repository; writers must run in a git worktree`;
   const existing = readJson(lp);
   if (existing && existing.kind === "native" && existing.id !== id) {
-    die(`worktree is locked for a native subagent (${existing.label || existing.id}, since ${existing.since}). Release it with \`agent-wt release <name>\` when that subagent is done.`);
+    return `worktree is locked for a native subagent (${existing.label || existing.id}, since ${existing.since}). Release it with \`agent-wt release <name>\` when that subagent is done.`;
   }
   if (existing && existing.pid && alive(existing.pid) && existing.id !== id) {
-    die(`worktree is locked by another writer (run ${existing.id}, pid ${existing.pid}, role ${existing.role}). One writer per worktree.`);
+    return `worktree is locked by another writer (run ${existing.id}, pid ${existing.pid}, role ${existing.role}). One writer per worktree.`;
   }
+  return null;
+}
+function acquireWriteLock(cwd, id, role) {
+  const conflict = writeLockConflict(cwd, id);
+  if (conflict) die(conflict);
+  const lp = lockPath(cwd);
   writeJson(lp, { id, role, kind: "process", pid: process.pid, owner: os.userInfo().username, cwd, since: nowIso() });
   return lp;
+}
+// Native writers hold a lock with no process behind it (`agent-wt lock`); they live at
+// <main>/.git/worktrees/<name>/delegate-kit.lock and count toward the writer cap of the repository.
+function nativeWriterLocks(cwd) {
+  const r = sh("git", ["rev-parse", "--git-common-dir"], { cwd });
+  if (r.status !== 0) return [];
+  const dir = path.join(path.resolve(cwd, r.stdout.trim()), "worktrees");
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir).flatMap((name) => {
+    const l = readJson(path.join(dir, name, "delegate-kit.lock"));
+    return l && l.kind === "native" ? [{ name, label: l.label || null, since: l.since || null }] : [];
+  });
+}
+
+function resolveCaps(opts = {}) {
+  const raw = opts["max-writers"] !== undefined ? { v: opts["max-writers"], from: "--max-writers" }
+    : process.env.DELEGATE_KIT_MAX_WRITERS ? { v: process.env.DELEGATE_KIT_MAX_WRITERS, from: "DELEGATE_KIT_MAX_WRITERS" } : null;
+  let writers = WRITERS_DEFAULT;
+  if (raw) {
+    const n = raw.v === true ? NaN : Number(raw.v);
+    if (!Number.isInteger(n) || n < 1) die(`${raw.from} must be an integer from 1 to ${WRITERS_CEILING} (got ${raw.v === true ? "nothing" : raw.v})`);
+    if (n > WRITERS_CEILING) die(`${raw.from}=${n} is above the ceiling of ${WRITERS_CEILING} writers; the ceiling holds against every flag. Split the work into waves.`);
+    writers = n;
+  }
+  let workers = writers + WORKERS_HEADROOM;
+  if (process.env.DELEGATE_KIT_MAX_WORKERS) {
+    const n = Number(process.env.DELEGATE_KIT_MAX_WORKERS);
+    if (!Number.isInteger(n) || n < 1) die(`DELEGATE_KIT_MAX_WORKERS must be a positive integer (got ${process.env.DELEGATE_KIT_MAX_WORKERS})`);
+    workers = Math.max(n, writers + 1);
+  }
+  return { writers, workers, ceiling: WRITERS_CEILING, source: raw ? raw.from : "default" };
+}
+/*
+ * Мьютекс на «посчитать и занять».
+ *
+ * Проверка потолка — чтение чужих meta.json и lock'ов, а занятие слота —
+ * запись своего meta.json спустя spawn. Восемь параллельных стартов из одного
+ * сообщения координатора все проходят чтение до первой записи и все стартуют
+ * (Codex-ревью PR #4 воспроизвёл это на agent-wt: восемь lock'ов при cap 1).
+ * Файл с флагом wx атомарен на любой POSIX-ФС; труп опознаётся по мёртвому
+ * pid. Держится от проверки до появления meta.json — для отсоединённого
+ * прогона его пишет супервизор, поэтому родитель ждёт файл, не отпуская.
+ */
+const CAPS_MUTEX = path.join(STATE_DIR, "caps.lock");
+let capsMutexHeld = false;
+function acquireCapsMutex(timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { fs.writeFileSync(CAPS_MUTEX, String(process.pid), { flag: "wx" }); capsMutexHeld = true; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
+    const holder = Number(fs.readFileSync(CAPS_MUTEX, "utf8").trim() || 0);
+    if (!holder || !alive(holder)) { try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} continue; }
+    if (Date.now() > deadline) die(`another agent-run (pid ${holder}) has held ${CAPS_MUTEX} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the file`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+}
+function releaseCapsMutex() { if (!capsMutexHeld) return; capsMutexHeld = false; try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} }
+
+// Refuse before anything is spawned. Native locks (`agent-wt lock`) of the repository of
+// cwd count as workers and as writers; external runs count machine-wide.
+function checkCaps(caps, write, cwd) {
+  const running = activeRuns();
+  const native = nativeWriterLocks(cwd);
+  if (running.length + native.length >= caps.workers) die(`max ${caps.workers} active workers reached (${[running.length ? `${running.length} external: ${running.map((r) => r.id).join(", ")}` : null, native.length ? `${native.length} native: ${native.map((n) => n.name).join(", ")}` : null].filter(Boolean).join("; ")}). The worker cap is writers (${caps.writers}) + ${WORKERS_HEADROOM}; raise --max-writers or DELEGATE_KIT_MAX_WORKERS.`);
+  if (!write) return;
+  const external = running.filter((r) => r.write);
+  const total = external.length + native.length;
+  if (total >= caps.writers) {
+    const who = [external.length ? `${external.length} external: ${external.map((r) => r.id).join(", ")}` : null, native.length ? `${native.length} native: ${native.map((n) => n.name).join(", ")}` : null].filter(Boolean).join("; ");
+    die(`max ${caps.writers} concurrent writers reached (${who}). Raising the cap is a per-task decision: state the partition — one ticket per writer, disjoint write scopes — get the user's yes, then --max-writers N (ceiling ${WRITERS_CEILING}) or DELEGATE_KIT_MAX_WRITERS for the session.`);
+  }
 }
 function releaseWriteLock(cwd, id) {
   const lp = lockPath(cwd);
@@ -750,6 +869,14 @@ async function cmdRun(opts, resumeOf = null) {
   if (onFinishRaw === true) die(`--on-finish needs a shell command, e.g. --on-finish 'echo "$DK_ROLE $DK_STATUS" >> ~/dk-done.log'`);
   const onFinish = onFinishRaw ? String(onFinishRaw) : null;
 
+  const caps = resolveCaps(opts);
+  if (opts._supervise) SUPERVISED = { id: opts.id, role, backend, model, effort, cwd, write };
+  // The initial supervised start runs under the mutex its parent still holds; every other
+  // start (foreground, detach parent, quota fallback) takes it itself.
+  if (!opts._supervise || opts._fallbackFrom) acquireCapsMutex();
+  checkCaps(caps, write, cwd);
+  if (write) { const conflict = writeLockConflict(cwd, null); if (conflict) die(conflict); }
+
   if (opts.detach && !opts._supervise) {
     const id = newId();
     const args = process.argv.slice(2).filter((a) => a !== "--detach");
@@ -760,14 +887,15 @@ async function cmdRun(opts, resumeOf = null) {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline && !fs.existsSync(path.join(runDir(id), "meta.json"))) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
     const m = metaOf(id);
+    releaseCapsMutex();
+    if (m && m.status === "failed" && m.error) die(`detached run ${id} did not start: ${m.error}`);
     process.stdout.write(JSON.stringify({ id, role, backend, model, effort, cwd, status: m ? m.status : "starting", supervisor_pid: sup.pid }) + "\n");
     return;
   }
-  const running = activeRuns();
-  if (running.length >= MAX_WORKERS) die(`max ${MAX_WORKERS} active workers reached (${running.map((r) => r.id).join(", ")})`);
-  if (write && running.filter((r) => r.write).length >= MAX_WRITERS) die(`max ${MAX_WRITERS} concurrent writers reached`);
 
   const id = opts.id || newId();
+  // Re-check inside the supervisor: another run may have taken a slot since the parent looked.
+  checkCaps(caps, write, cwd);
   fs.mkdirSync(runDir(id), { recursive: true });
   const outFile = path.join(runDir(id), "last-message.txt");
   const built = buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId: resumeOf?.sessionId });
@@ -782,6 +910,7 @@ async function cmdRun(opts, resumeOf = null) {
   const child = spawn(built.cmd, built.args, { cwd, detached: true, stdio: ["ignore", fs.openSync(stdoutPath, "w"), fs.openSync(stderrPath, "w")],
     env: { ...process.env, DELEGATE_KIT_DEPTH: "1", DELEGATE_KIT_RUN_ID: id } });
   meta.pid = child.pid; saveMeta(meta);
+  releaseCapsMutex();
   child.unref();
 
   const finish = (code, signal) => {
@@ -896,6 +1025,7 @@ switch (sub) {
   agent-run run --role <${Object.keys(ROLES).join("|")}> [--preset P] [--backend claude|codex] [--model M] [--effort E]
                 [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout] [--fallback auto|none]
                 [--on-finish CMD]                       shell command run when this run reaches a terminal state
+                [--max-writers N]                      writer cap for this run (default ${WRITERS_DEFAULT}, ceiling ${WRITERS_CEILING})
                 [--lens spec|correctness|standards] [--panel ID]      (reviewer only: lens preamble; panel id groups runs in the ledger)
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
@@ -914,6 +1044,13 @@ A non-zero exit is a failed delivery, retried at 5s/15s/45s/120s: by the live su
 whoever next runs list, status, wait or notify. Exactly once — a claim file keeps two processes from
 both delivering. After ${DELIVERY_MAX_ATTEMPTS} attempts the delivery is marked failed and only
 \`notify <id> --force\` will retry it. A run that failed on quota delivers nothing: its fallback rerun does.
+
+Caps: writers ${WRITERS_DEFAULT} by default, ceiling ${WRITERS_CEILING}; workers = writers + ${WORKERS_HEADROOM}. External runs count machine-wide, native
+locks (\`agent-wt lock\`) within the repository of --cwd. --max-writers N raises the cap for this run,
+DELEGATE_KIT_MAX_WRITERS for the session (DELEGATE_KIT_MAX_WORKERS overrides the total, floored at
+writers + 1); the ceiling holds against both. A run refused by a cap or a locked worktree fails before
+anything is spawned, --detach included: the parent prints the reason; a refusal inside the supervisor
+(a race) is recorded as failed. Concurrent starts count and take their slot under one mutex.
 
 lifecycle is orthogonal to status: running, or parked when the session can still be revived with
 \`resume\`, or done when it cannot. status says how it ended, lifecycle whether you can go back to it.
