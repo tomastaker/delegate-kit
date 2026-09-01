@@ -133,13 +133,26 @@ for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" lock "$w" --max-writers 1 >/dev/null 
 ok "занят один worktree" "$("$WT" list | jq '[.[] | select(.lock | startswith("locked"))] | length')" "1"
 ok "мьютекс отпущен" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "free"
 
-echo "── брошенный мьютекс с мёртвым pid не блокирует"
+echo "── брошенные мьютексы с мёртвым pid не блокируют"
+for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" release "$w" >/dev/null 2>&1; done
 mkdir -p "$BASE/repo/.git/delegate-kit.caps.lock"; echo 999999 > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
-"$WT" lock w8 --max-writers 8 >/dev/null; ok "lock прошёл" "$?" "0"
+"$WT" lock w8 --max-writers 8 >/dev/null; ok "agent-wt снял труп репозиторного мьютекса" "$?" "0"
 echo 999999 > "$DELEGATE_KIT_HOME/caps.lock"
-run "$WTS/w8" --max-writers 1
-ok "agent-run снял труп мьютекса и дошёл до потолка" "$(has "$ERR" "concurrent writers reached")" "yes"
-ok "мьютекс agent-run отпущен" "$([ -e "$DELEGATE_KIT_HOME/caps.lock" ] && echo held || echo free)" "free"
+mkdir -p "$BASE/repo/.git/delegate-kit.caps.lock"; echo 999999 > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
+run "$WTS/w7" --max-writers 1
+ok "agent-run снял оба трупа и дошёл до потолка" "$(has "$ERR" "concurrent writers reached")" "yes"
+ok "машинный мьютекс отпущен" "$([ -e "$DELEGATE_KIT_HOME/caps.lock" ] && echo held || echo free)" "free"
+ok "репозиторный мьютекс отпущен" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "free"
+
+echo "── agent-wt видит process-lock внешнего писателя в любом linked worktree"
+"$WT" release w8 >/dev/null
+git -C "$BASE/repo" worktree add -q -b dk/elsewhere "$BASE/elsewhere" >/dev/null 2>&1
+jq -n --arg pid "$$" '{id:"ext-1",role:"implementer",kind:"process",pid:($pid|tonumber),cwd:"x"}' > "$BASE/repo/.git/worktrees/elsewhere/delegate-kit.lock"
+ERR=$("$WT" lock w1 --max-writers 1 2>&1 >/dev/null); RC=$?
+ok "отказ: чужой worktree занят живым процессом" "$RC" "1"
+ok "он назван" "$(has "$ERR" "(elsewhere)")" "yes"
+jq -n '{id:"ext-2",role:"implementer",kind:"process",pid:999999,cwd:"x"}' > "$BASE/repo/.git/worktrees/elsewhere/delegate-kit.lock"
+"$WT" lock w1 --max-writers 1 >/dev/null; ok "мёртвый process-lock не считается" "$?" "0"
 
 echo; echo "Пройдено: $PASS, провалено: $FAIL"
 exit $((FAIL > 0))
