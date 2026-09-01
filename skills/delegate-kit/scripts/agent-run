@@ -121,6 +121,7 @@ const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single J
 let SUPERVISED = null; // { id, role, backend, model, effort, cwd, write } while running as --_supervise
 const die = (msg, code = 1) => {
   process.stderr.write(`agent-run: ${msg}\n`);
+  releaseCapsMutex();
   if (SUPERVISED && !fs.existsSync(path.join(runDir(SUPERVISED.id), "meta.json"))) {
     const now = nowIso();
     const result = { status: "failed", summary: `agent-run refused to start the worker: ${msg}`, changes: [], checks_run: [], not_verified: [], findings: [], plan: [], questions: [], sources: [], next_steps: [] };
@@ -255,13 +256,39 @@ function resolveCaps(opts = {}) {
   }
   return { writers, workers, ceiling: WRITERS_CEILING, source: raw ? raw.from : "default" };
 }
-// Refuse before anything is spawned. `write` runs also count the native locks of their repo.
+/*
+ * Мьютекс на «посчитать и занять».
+ *
+ * Проверка потолка — чтение чужих meta.json и lock'ов, а занятие слота —
+ * запись своего meta.json спустя spawn. Восемь параллельных стартов из одного
+ * сообщения координатора все проходят чтение до первой записи и все стартуют
+ * (Codex-ревью PR #4 воспроизвёл это на agent-wt: восемь lock'ов при cap 1).
+ * Файл с флагом wx атомарен на любой POSIX-ФС; труп опознаётся по мёртвому
+ * pid. Держится от проверки до появления meta.json — для отсоединённого
+ * прогона его пишет супервизор, поэтому родитель ждёт файл, не отпуская.
+ */
+const CAPS_MUTEX = path.join(STATE_DIR, "caps.lock");
+let capsMutexHeld = false;
+function acquireCapsMutex(timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try { fs.writeFileSync(CAPS_MUTEX, String(process.pid), { flag: "wx" }); capsMutexHeld = true; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
+    const holder = Number(fs.readFileSync(CAPS_MUTEX, "utf8").trim() || 0);
+    if (!holder || !alive(holder)) { try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} continue; }
+    if (Date.now() > deadline) die(`another agent-run (pid ${holder}) has held ${CAPS_MUTEX} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the file`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+}
+function releaseCapsMutex() { if (!capsMutexHeld) return; capsMutexHeld = false; try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} }
+
+// Refuse before anything is spawned. Native locks (`agent-wt lock`) of the repository of
+// cwd count as workers and as writers; external runs count machine-wide.
 function checkCaps(caps, write, cwd) {
   const running = activeRuns();
-  if (running.length >= caps.workers) die(`max ${caps.workers} active workers reached (${running.map((r) => r.id).join(", ")}). The worker cap is writers (${caps.writers}) + ${WORKERS_HEADROOM}; raise --max-writers or DELEGATE_KIT_MAX_WORKERS.`);
+  const native = nativeWriterLocks(cwd);
+  if (running.length + native.length >= caps.workers) die(`max ${caps.workers} active workers reached (${[running.length ? `${running.length} external: ${running.map((r) => r.id).join(", ")}` : null, native.length ? `${native.length} native: ${native.map((n) => n.name).join(", ")}` : null].filter(Boolean).join("; ")}). The worker cap is writers (${caps.writers}) + ${WORKERS_HEADROOM}; raise --max-writers or DELEGATE_KIT_MAX_WORKERS.`);
   if (!write) return;
   const external = running.filter((r) => r.write);
-  const native = nativeWriterLocks(cwd);
   const total = external.length + native.length;
   if (total >= caps.writers) {
     const who = [external.length ? `${external.length} external: ${external.map((r) => r.id).join(", ")}` : null, native.length ? `${native.length} native: ${native.map((n) => n.name).join(", ")}` : null].filter(Boolean).join("; ");
@@ -844,6 +871,9 @@ async function cmdRun(opts, resumeOf = null) {
 
   const caps = resolveCaps(opts);
   if (opts._supervise) SUPERVISED = { id: opts.id, role, backend, model, effort, cwd, write };
+  // The initial supervised start runs under the mutex its parent still holds; every other
+  // start (foreground, detach parent, quota fallback) takes it itself.
+  if (!opts._supervise || opts._fallbackFrom) acquireCapsMutex();
   checkCaps(caps, write, cwd);
   if (write) { const conflict = writeLockConflict(cwd, null); if (conflict) die(conflict); }
 
@@ -857,6 +887,7 @@ async function cmdRun(opts, resumeOf = null) {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline && !fs.existsSync(path.join(runDir(id), "meta.json"))) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
     const m = metaOf(id);
+    releaseCapsMutex();
     if (m && m.status === "failed" && m.error) die(`detached run ${id} did not start: ${m.error}`);
     process.stdout.write(JSON.stringify({ id, role, backend, model, effort, cwd, status: m ? m.status : "starting", supervisor_pid: sup.pid }) + "\n");
     return;
@@ -879,6 +910,7 @@ async function cmdRun(opts, resumeOf = null) {
   const child = spawn(built.cmd, built.args, { cwd, detached: true, stdio: ["ignore", fs.openSync(stdoutPath, "w"), fs.openSync(stderrPath, "w")],
     env: { ...process.env, DELEGATE_KIT_DEPTH: "1", DELEGATE_KIT_RUN_ID: id } });
   meta.pid = child.pid; saveMeta(meta);
+  releaseCapsMutex();
   child.unref();
 
   const finish = (code, signal) => {
@@ -1017,7 +1049,8 @@ Caps: writers ${WRITERS_DEFAULT} by default, ceiling ${WRITERS_CEILING}; workers
 locks (\`agent-wt lock\`) within the repository of --cwd. --max-writers N raises the cap for this run,
 DELEGATE_KIT_MAX_WRITERS for the session (DELEGATE_KIT_MAX_WORKERS overrides the total, floored at
 writers + 1); the ceiling holds against both. A run refused by a cap or a locked worktree fails before
-anything is spawned, --detach included: the parent prints the reason and the run is recorded as failed.
+anything is spawned, --detach included: the parent prints the reason; a refusal inside the supervisor
+(a race) is recorded as failed. Concurrent starts count and take their slot under one mutex.
 
 lifecycle is orthogonal to status: running, or parked when the session can still be revived with
 \`resume\`, or done when it cannot. status says how it ended, lifecycle whether you can go back to it.

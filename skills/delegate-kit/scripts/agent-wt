@@ -18,6 +18,9 @@ agent-wt cleanup                      remove worktrees whose branch is merged in
 EOF
 }
 
+CAPS_MUTEX=""
+release_caps_mutex() { [ -n "$CAPS_MUTEX" ] && rm -rf "$CAPS_MUTEX"; CAPS_MUTEX=""; }
+trap release_caps_mutex EXIT
 die() { echo "agent-wt: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 need git; need jq
@@ -108,6 +111,19 @@ writer_cap() {
   [ "$v" -le "$WRITERS_CEILING" ] || die "$from=$v is above the ceiling of $WRITERS_CEILING writers; the ceiling holds against every flag. Split the work into waves."
   echo "$v"
 }
+# The count-then-lock window: eight concurrent `lock --max-writers 1` all counted zero and
+# all succeeded. `mkdir` is atomic, so the directory is the mutex; a dead pid inside is stale.
+acquire_caps_mutex() {
+  local d; d="$(git rev-parse --git-common-dir)"; d="$(cd "$d" && pwd)/delegate-kit.caps.lock"
+
+  for _ in $(seq 1 300); do
+    if mkdir "$d" 2>/dev/null; then echo "$$" > "$d/pid"; CAPS_MUTEX="$d"; return; fi
+    local pid; pid=$(cat "$d/pid" 2>/dev/null || true)
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
+    sleep 0.05
+  done
+  die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
+}
 locked_worktrees() {
   local base; base=$(wt_base_dir); [ -d "$base" ] || return 0
   for p in "$base"/*/; do
@@ -131,6 +147,7 @@ cmd_lock() {
   fi
   local cap
   if [ -n "$cap_flag" ]; then cap=$(writer_cap "$cap_flag" "--max-writers"); else cap=$(writer_cap "${DELEGATE_KIT_MAX_WRITERS:-}" "DELEGATE_KIT_MAX_WRITERS"); fi
+  acquire_caps_mutex
   local held; held=$(locked_worktrees | tr '\n' ' '); held=${held% }
   local n=0; [ -n "$held" ] && n=$(wc -w <<<"$held" | tr -d ' ')
   if [ "$n" -ge "$cap" ]; then
@@ -138,6 +155,7 @@ cmd_lock() {
   fi
   jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{id:$id,kind:"native",label:$label,role:"implementer",pid:null,cwd:$cwd,since:$since}' > "$lf"
+  release_caps_mutex
   jq -n --arg n "$name" --arg p "$p" --arg l "$label" '{name:$n,path:$p,locked_for:$l,release_with:("agent-wt release " + $n)}'
 }
 
