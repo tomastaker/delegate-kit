@@ -607,8 +607,24 @@ function resolveRoute(opts = {}) {
   // Who wrote the code decides the reviewer. Default to whoever this preset would have
   // implemented with — including the UI exception, or the reviewer flips to the wrong family.
   const defaultAuthor = preset === "auto" && uiKind ? "claude" : table.implementer;
+  /*
+   * Для reviewer и verifier автор — обязательный флаг. Раньше он молча
+   * подставлялся из implementer'а пресета, и diff, написанный самим
+   * координатором на Claude под auto, получал автора codex, ревьюера claude и
+   * пометку independent: true — ревью того же семейства выдавалось за
+   * независимое. Явный --backend на run автора не требует: семейство уже
+   * названо, а независимость там не считается.
+   */
+  const authorGiven = opts["author-backend"] && opts["author-backend"] !== true;
+  // The exemption is for `run` only (family named, independence not computed there) and for a
+  // resume (the family is the persisted one). `route` always needs the author: it is what
+  // `independent` is computed against.
+  const runWithBackend = opts._run && opts.backend && opts.backend !== true;
+  if (["reviewer", "verifier"].includes(role) && !authorGiven && !runWithBackend && !opts._composed) {
+    die(`--author-backend claude|codex|self is required for --role ${role}: who wrote the diff decides the family. A delegated implementer → its family; a diff the coordinator wrote itself → self.`);
+  }
   // `self`: the parent wrote the change itself, so the author is the parent's family
-  let author = opts["author-backend"] && opts["author-backend"] !== true ? String(opts["author-backend"]) : defaultAuthor;
+  let author = authorGiven ? String(opts["author-backend"]) : defaultAuthor;
   if (author === "self") { if (!parent) die("--author-backend self needs a detectable parent (or --parent)"); author = parent; }
   if (!["claude", "codex"].includes(author)) die("--author-backend must be claude, codex or self");
 
@@ -860,7 +876,7 @@ async function cmdRun(opts, resumeOf = null) {
   const role = resumeOf ? resumeOf.role : opts.role;
   if (!role || !ROLES[role]) die(`--role must be one of ${Object.keys(ROLES).join("|")}`);
   const spec = ROLES[role];
-  const route = resolveRoute({ ...opts, role });
+  const route = resolveRoute({ ...opts, role, _run: true, backend: resumeOf ? resumeOf.backend : opts.backend });
   const backend = resumeOf ? resumeOf.backend : route.backend;
   const model = resumeOf ? (opts.model && opts.model !== true ? opts.model : resumeOf.model) : route.model;
   const effort = resumeOf ? (opts.effort && opts.effort !== true ? opts.effort : resumeOf.effort) : route.effort;
@@ -1049,7 +1065,8 @@ switch (sub) {
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
   agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend claude|codex|self] [--kind ui|refactor|mechanical]
-                                          who should run this role, on which family, natively or externally
+                                          who should run this role, on which family, natively or externally;
+                                          --author-backend is required for reviewer and verifier (self = the coordinator wrote the diff)
   agent-run route --role reviewer [--diff FILE] [--depth single|panel|led]
                                           how many reviewers this diff deserves, which lens and family each gets, and the lead
   agent-run preset [${Object.keys(PRESETS).join("|")}]     show or persist the default preset
