@@ -1,0 +1,71 @@
+{
+  "status": "done",
+  "summary": "Reviewed src/ratelimit.js and test/ratelimit.test.js against spec/ratelimit.md. Two high-severity spec violations: keys are lowercased (spec requires case-sensitive keys) and retryAfterMs is always the full windowMs (spec requires the time until the oldest in-window hit expires). One medium memory issue: per-key Map entries are never evicted, so state grows with the number of distinct keys ever seen and never shrinks. Tests pass (2/2) but cover neither broken behaviour, which is why CI is green. The diff file also contains an unrelated pagination change; that was out of scope and not reviewed.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 2 passed, 0 failed",
+    "node -e repro of case-folding: h(\"A\",0) and h(\"a\",0) share a bucket, third call denied at limit 2",
+    "node -e repro of retryAfterMs: limit 1, windowMs 1000, hit at t=0, denied at t=900 returns retryAfterMs 1000 (expected 100)"
+  ],
+  "not_verified": [
+    "Behaviour when `now` is passed non-monotonically across calls for the same key (the list is assumed sorted ascending; a fix using list[0] as the oldest hit inherits that assumption).",
+    "Behaviour for non-positive `limit` or `windowMs` — the spec does not define it and the code does not validate it."
+  ],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/ratelimit.js",
+      "line": 4,
+      "claim": "Keys are lowercased, so keys that differ only in case collide and share one counter, contradicting the spec's case-sensitivity requirement.",
+      "evidence": "Spec line 3: \"Keys are opaque, case-sensitive strings; two keys that differ in any character are different keys.\" Code: `const k = key.toLowerCase();`. Repro with limit 2, windowMs 1000: h(\"A\",0)={allowed:true}, h(\"a\",0)={allowed:true}, h(\"A\",0)={allowed:false} — two distinct keys consumed one budget. Any caller keying on a case-sensitive identifier (API token, user id, base64 value) has its quota merged with other identifiers, and `key.toLowerCase()` also throws TypeError for a non-string key.",
+      "suggested_fix": "Drop the normalisation: use `key` directly as the Map key (`const list = (hits.get(key) ?? []).filter(...)`, `hits.set(key, list)`).",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/ratelimit.js",
+      "line": 8,
+      "claim": "On denial, retryAfterMs is always the full windowMs instead of the time until the oldest in-window hit expires, so callers wait far longer than necessary.",
+      "evidence": "Spec line 5: \"`retryAfterMs` is the time until the OLDEST hit in the window leaves it (so the caller waits the minimum, not the whole window).\" Code returns `{ allowed: false, retryAfterMs: windowMs }`. Repro with limit 1, windowMs 1000: hit at t=0, then hit at t=900 returns retryAfterMs 1000; the oldest hit leaves the window at t=1000, so the correct value is 100. The error is unbounded up to windowMs and is worst exactly when the caller is closest to being allowed.",
+      "suggested_fix": "Compute from the oldest retained hit: `return { allowed: false, retryAfterMs: windowMs - (now - list[0]) };` — list is already filtered to in-window hits, so list[0] is the oldest.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "correctness",
+      "lens": "correctness",
+      "file": "src/ratelimit.js",
+      "line": 5,
+      "claim": "Map entries for idle keys are never removed, so memory grows without bound with the number of distinct keys ever seen and never shrinks.",
+      "evidence": "Spec line 6: \"Hits outside the window are dropped from memory so state does not grow with time.\" Expired hits are pruned only on the next call for that same key (the `.filter` inside `hit`), and `hits.set(k, list)` runs unconditionally. A key hit once and never again keeps its array in the Map forever; with per-IP or per-token keys this is a monotonically growing map in a long-running process, which is the growth that bullet exists to prevent.",
+      "suggested_fix": "Delete the bucket when nothing remains in the window (`if (list.length === 0) hits.delete(k); else hits.set(k, list);` on the deny/prune path) and/or sweep empty buckets periodically.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "low",
+      "kind": "standards",
+      "lens": "standards",
+      "file": "test/ratelimit.test.js",
+      "line": 3,
+      "claim": "Tests assert only the allowed/denied flag; neither retryAfterMs nor key case-sensitivity is covered, which is why both spec violations pass CI.",
+      "evidence": "The two tests check `.allowed` for a single key \"a\". `npm test` reports 2 passed with both high-severity defects present. Spec bullets 3 and 5 have no corresponding assertion.",
+      "suggested_fix": "Add a test asserting `{limit:1, windowMs:1000}` with hits at 0 and 900 yields `retryAfterMs === 100`, and a test asserting `h(\"A\",0)` and `h(\"a\",0)` do not share a budget.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Fix the two high-severity spec violations (case-folding and retryAfterMs) and add the regression tests named above before merge.",
+    "Decide whether idle-key eviction belongs in this change or a follow-up; if deferred, document the unbounded key-count growth in the module."
+  ]
+}

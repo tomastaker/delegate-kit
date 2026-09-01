@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="340" viewBox="0 0 980 340" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#59636e"/>
+    </marker>
+  </defs>
+  <rect width="980" height="340" fill="#ffffff" rx="12"/>
+
+  <!-- 1. Shape -->
+  <text x="40" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">1 · SHAPE</text>
+  <rect x="40" y="52" width="200" height="236" rx="10" fill="#f6f8fa" stroke="#d1d9e0"/>
+  <text x="56" y="80" fill="#1f2328" font-weight="600" font-size="14">The overseer</text>
+  <text x="56" y="98" fill="#59636e">your session, one context</text>
+  <text x="56" y="132" fill="#1f2328">≤ 3 files → does it himself</text>
+  <text x="56" y="154" fill="#1f2328">prose, &gt; 1 module → plan first</text>
+  <text x="56" y="176" fill="#1f2328">one slice → one gang</text>
+  <text x="56" y="198" fill="#1f2328">disjoint slices → gangs at once</text>
+  <text x="56" y="220" fill="#1f2328">schema → API → UI, in turn</text>
+  <text x="56" y="256" fill="#59636e">3 writers by default, 8 at most,</text>
+  <text x="56" y="272" fill="#59636e">each in its own worktree</text>
+
+  <line x1="246" y1="170" x2="294" y2="170" stroke="#59636e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 2. Build -->
+  <text x="300" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">2 · BUILD</text>
+  <rect x="300" y="52" width="210" height="104" rx="10" fill="#f6f8fa" stroke="#e8590c" stroke-width="1.5"/>
+  <circle cx="322" cy="80" r="7" fill="#e8590c"/>
+  <text x="338" y="85" fill="#1f2328" font-weight="600" font-size="14">Claude gang</text>
+  <text x="316" y="110" fill="#1f2328">worktree dk/tariffs</text>
+  <text x="316" y="128" fill="#59636e">native subagent, steerable</text>
+  <text x="316" y="145" fill="#59636e">commits on its branch</text>
+
+  <rect x="300" y="184" width="210" height="104" rx="10" fill="#f6f8fa" stroke="#8250df" stroke-width="1.5"/>
+  <circle cx="322" cy="212" r="7" fill="#8250df"/>
+  <text x="338" y="217" fill="#1f2328" font-weight="600" font-size="14">Codex gang</text>
+  <text x="316" y="242" fill="#1f2328">worktree dk/invoices</text>
+  <text x="316" y="260" fill="#59636e">headless codex exec, sandboxed</text>
+  <text x="316" y="277" fill="#59636e">commits on its branch</text>
+
+  <!-- crossing arrows: Claude-written → Codex reviews, Codex-written → Claude reviews -->
+  <path d="M 514 104 C 560 104, 560 236, 606 236" fill="none" stroke="#e8590c" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M 514 236 C 560 236, 560 104, 606 104" fill="none" stroke="#8250df" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="524" y="159" width="72" height="20" rx="4" fill="#ffffff" stroke="#d1d9e0"/>
+  <text x="560" y="173" fill="#59636e" text-anchor="middle" font-size="11">frozen diff</text>
+
+  <!-- 3. Review -->
+  <text x="610" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">3 · REVIEW</text>
+  <rect x="610" y="52" width="180" height="104" rx="10" fill="#f6f8fa" stroke="#e8590c" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <circle cx="632" cy="80" r="7" fill="#e8590c"/>
+  <text x="648" y="85" fill="#1f2328" font-weight="600" font-size="14">Claude reads</text>
+  <text x="626" y="110" fill="#1f2328">what Codex wrote</text>
+  <text x="626" y="128" fill="#59636e">read-only, fresh session</text>
+  <text x="626" y="145" fill="#59636e">findings with file:line</text>
+
+  <rect x="610" y="184" width="180" height="104" rx="10" fill="#f6f8fa" stroke="#8250df" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <circle cx="632" cy="212" r="7" fill="#8250df"/>
+  <text x="648" y="217" fill="#1f2328" font-weight="600" font-size="14">Codex reads</text>
+  <text x="626" y="242" fill="#1f2328">what Claude wrote</text>
+  <text x="626" y="260" fill="#59636e">read-only, fresh session</text>
+  <text x="626" y="277" fill="#59636e">findings with file:line</text>
+
+  <line x1="796" y1="170" x2="824" y2="170" stroke="#59636e" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 4. Sign-off -->
+  <text x="830" y="38" fill="#59636e" font-size="11" letter-spacing="1.5">4 · TALLY</text>
+  <rect x="830" y="52" width="120" height="236" rx="10" fill="#f6f8fa" stroke="#d1d9e0"/>
+  <text x="846" y="80" fill="#1f2328" font-weight="600" font-size="14">The tally</text>
+  <text x="846" y="112" fill="#1f2328">✓ done</text>
+  <text x="846" y="134" fill="#1f2328">✓ checked</text>
+  <text x="846" y="156" fill="#1f2328">✗ not checked</text>
+  <text x="846" y="178" fill="#1f2328">? open</text>
+  <text x="846" y="200" fill="#1f2328">who reviewed</text>
+  <text x="846" y="240" fill="#59636e">you merge what</text>
+  <text x="846" y="256" fill="#59636e">you accept</text>
+
+  <text x="490" y="322" fill="#59636e" text-anchor="middle" font-size="11">One gang short? The other family's fresh session reviews instead, and the tally says so.</text>
+</svg>
