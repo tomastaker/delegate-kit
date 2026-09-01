@@ -254,7 +254,8 @@ function inspectWorktree(cwd) {
   if (!g) return { cwd, git: false, base: null, commits: [], dirty: [], partial: false, note: null };
   let base = null; try { base = fs.readFileSync(path.join(g, "delegate-kit.base"), "utf8").trim() || null; } catch {}
   const commits = base ? (sh("git", ["log", "--format=%h%x09%s", `${base}..HEAD`], { cwd }).stdout || "").split("\n").filter(Boolean).map((l) => { const [sha, ...rest] = l.split("\t"); return { sha, subject: rest.join("\t") }; }) : [];
-  const dirty = (sh("git", ["status", "--porcelain"], { cwd }).stdout || "").split("\n").filter(Boolean).map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
+  // --untracked-files=all: a new directory is listed file by file, not as one `?? dir/` entry
+  const dirty = (sh("git", ["status", "--porcelain", "--untracked-files=all"], { cwd }).stdout || "").split("\n").filter(Boolean).map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
   const partial = commits.length > 0 || dirty.length > 0;
   return { cwd, git: true, base, commits, dirty, partial, note: partial ? previousAttemptNote({ commits, dirty }) : null };
 }
