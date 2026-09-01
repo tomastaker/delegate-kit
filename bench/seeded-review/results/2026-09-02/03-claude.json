@@ -1,0 +1,84 @@
+{
+  "status": "done",
+  "summary": "Reviewed src/money.js, test/money.test.js and spec/money.md from the frozen diff. Both exported functions violate the spec: allocate uses independent Math.round per party, so the returned parts do not sum to total (loses a unit on allocate(100,[1,1,1]) = 99, invents two on allocate(10,[1,1,1,1]) = 12), and add validates only NaN, so floats and strings pass through (add(1.5,2)=3.5, add(\"1\",\"2\")=\"12\"). Two lower findings cover the wrong error class for non-integer ratios and test coverage that never exercises the remainder invariant. All three shipped tests pass, which is the problem: they only test the even-split case.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 3 passed, 0 failed (does not exercise any defect found)",
+    "node -e ad-hoc harness against src/money.js: reproduced allocate sum drift, allocate over-allocation, add float/string pass-through, RangeError on non-integer ratio"
+  ],
+  "not_verified": [
+    "Whether any caller outside this diff already depends on the current (incorrect) allocate rounding — src/ contains only errors.js and money.js, so there is no in-repo caller to check.",
+    "Intended behaviour for negative total (spec does not state it); allocate(-100,[1,1,1]) returns [-33,-33,-33], sum -99, but that is a consequence of finding 1, not an independent rule.",
+    "Intended behaviour above Number.MAX_SAFE_INTEGER; allocate(1e18,[1,1,1]) returns parts summing to 999999999999999900."
+  ],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/money.js",
+      "line": 11,
+      "claim": "allocate rounds each part independently, so the returned parts do not sum to total — it both loses and invents units, which the spec forbids explicitly.",
+      "evidence": "spec/money.md:3 requires \"The parts MUST sum exactly to `total`: distribute the remainder one unit at a time to the parties in order, never lose or invent a unit.\" Line 11 is `ratios.map((r) => Math.round((total * r) / sum))` with no remainder pass. Verified by running the shipped module: allocate(100,[1,1,1]) → [33,33,33], sum 99 (one minor unit lost); allocate(10,[1,1,1,1]) → [3,3,3,3], sum 12 (two minor units invented); allocate(5,[1,1,1,1,1,1]) → [1,1,1,1,1,1], sum 6.",
+      "suggested_fix": "Floor each share, then hand out the leftover `total - sum(floors)` one unit at a time to the parties in index order: `const shares = ratios.map(r => Math.floor(total * r / sum)); let rem = total - shares.reduce((s,x)=>s+x,0); for (let i = 0; rem > 0; i = (i+1) % shares.length, rem--) shares[i]++; return shares;`",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/money.js",
+      "line": 2,
+      "claim": "add accepts floats, strings and null instead of throwing TypeError, so non-integer money silently enters the system and string arguments are concatenated rather than added.",
+      "evidence": "spec/money.md:2 requires \"`add(a, b)` and `allocate` throw TypeError on any non-integer input (floats, NaN, strings)\". Line 2 checks only `Number.isNaN`, which does not coerce and is false for strings. Verified: add(1.5, 2) → 3.5; add(\"1\",\"2\") → \"12\" (string concatenation, not addition); add(null, 5) → 5. Note allocate at line 7 does apply the correct `Number.isInteger` check on `total`, so the two exported functions disagree on validation.",
+      "suggested_fix": "Replace the NaN check with the same guard allocate uses: `if (!Number.isInteger(a) || !Number.isInteger(b)) throw new TypeError(\"amounts must be integers\");` — Number.isInteger already rejects NaN, floats and strings.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/money.js",
+      "line": 9,
+      "claim": "A non-integer ratio throws RangeError where the spec calls for TypeError, so a caller catching TypeError for bad-type input misses it.",
+      "evidence": "spec/money.md:2 assigns non-integer input to TypeError; spec/money.md:4 assigns RangeError only to \"`ratios` is empty or contains a non-positive value\". Line 9 collapses both conditions into one RangeError. Verified: allocate(100,[1.5,1]) throws RangeError(\"ratio must be a positive integer\"), not TypeError.",
+      "suggested_fix": "Split the predicate: throw TypeError when `!Number.isInteger(r)`, and RangeError only when `r <= 0`.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "correctness",
+      "lens": "correctness",
+      "file": "test/money.test.js",
+      "line": 4,
+      "claim": "The tests pass while both spec violations are present: no case exercises the remainder path or any type rejection, so the suite gives no signal on the module's two central rules.",
+      "evidence": "npm test reports 3 passed. The only allocate success case is allocate(100,[1,1]) → [50,50], which divides evenly and never reaches the remainder branch; the only throw case is the empty array. No test asserts that parts sum to total, and no test calls add with a float, string or NaN. Both high findings above are invisible to this suite.",
+      "suggested_fix": "Add an uneven split asserting the exact array and the sum (allocate(100,[1,1,1]) → [34,33,33]), an over-allocation guard (allocate(10,[1,1,1,1]) → sum 10), a ratio-order case with unequal ratios, and throw cases for add(1.5,2), add(\"1\",\"2\") and add(NaN,1) asserting TypeError.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "low",
+      "kind": "standards",
+      "lens": "standards",
+      "file": "src/money.js",
+      "line": 8,
+      "claim": "A non-array `ratios` is reported as RangeError(\"ratios empty\"), which is both the wrong error class for a type problem and a message that misdescribes the input.",
+      "evidence": "Verified: allocate(100, \"abc\") throws RangeError with message \"ratios empty\" even though the argument is a non-empty string. The spec reserves RangeError for empty or non-positive ratios.",
+      "suggested_fix": "Separate the guards: `if (!Array.isArray(ratios)) throw new TypeError(\"ratios must be an array\");` before the `length === 0` RangeError.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Fix the two high findings before merge: they are the module's stated invariants and money is lost or created on every uneven split.",
+    "Decide the intended error class for a non-integer ratio (spec bullets 2 and 4 overlap) and align spec/money.md with the implementation once chosen.",
+    "Extend test/money.test.js so the remainder invariant and the type rejections are covered; the current suite would not have caught either high finding."
+  ]
+}

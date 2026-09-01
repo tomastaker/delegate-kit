@@ -1,0 +1,49 @@
+diff --git a/spec/pagination.md b/spec/pagination.md
+new file mode 100644
+index 0000000..7e84526
+--- /dev/null
++++ b/spec/pagination.md
+@@ -0,0 +1,7 @@
++# Cursor pagination
++- `page(items, {size, cursor})` returns `{items, nextCursor, totalPages}`.
++- `size` is an integer 1..100; anything else throws ShopError("InvalidSize").
++- `totalPages` = number of pages needed for `items.length` at `size` (0 items → 0 pages).
++- `cursor` is base64url of JSON `{"offset": n}`; absent cursor means offset 0.
++- A cursor that does not decode to an integer offset within `0..items.length` throws ShopError("InvalidCursor").
++- `nextCursor` is null on the last page.
+diff --git a/src/pagination.js b/src/pagination.js
+new file mode 100644
+index 0000000..a108a1c
+--- /dev/null
++++ b/src/pagination.js
+@@ -0,0 +1,19 @@
++import { ShopError } from "./errors.js";
++
++const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
++const dec = (c) => JSON.parse(Buffer.from(c, "base64url").toString("utf8"));
++
++export function page(items, { size, cursor } = {}) {
++  if (!Number.isInteger(size) || size < 1 || size > 100) throw new ShopError("InvalidSize", `size ${size}`);
++  let offset = 0;
++  if (cursor != null) {
++    try { offset = dec(cursor).offset; } catch { throw new ShopError("InvalidCursor", "undecodable"); }
++  }
++  const slice = items.slice(offset, offset + size);
++  const end = offset + size;
++  return {
++    items: slice,
++    nextCursor: end < items.length ? enc({ offset: end }) : null,
++    totalPages: items.length === 0 ? 0 : Math.floor(items.length / size) + 1,
++  };
++}
+diff --git a/test/pagination.test.js b/test/pagination.test.js
+new file mode 100644
+index 0000000..67c8c56
+--- /dev/null
++++ b/test/pagination.test.js
+@@ -0,0 +1,5 @@
++import test from "node:test"; import assert from "node:assert/strict";
++import { page } from "../src/pagination.js";
++test("first page", () => { const r = page([1,2,3,4,5], { size: 2 }); assert.deepEqual(r.items, [1,2]); assert.ok(r.nextCursor); });
++test("follows cursor", () => { const a = page([1,2,3], { size: 2 }); const b = page([1,2,3], { size: 2, cursor: a.nextCursor }); assert.deepEqual(b.items, [3]); assert.equal(b.nextCursor, null); });
++test("bad size", () => { assert.throws(() => page([], { size: 0 })); });
