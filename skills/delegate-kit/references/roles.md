@@ -53,6 +53,7 @@ The Codex CLI is offered `sol`, `terra` and `luna` only (`~/.codex/models_cache.
 - **Default** the other family than the author, high effort. After a Codex implementer: `claude` opus high. After a Claude implementer: `codex` gpt-5.6-sol high. UX/product review: `claude` opus.
 - **Why the other family**: the same family reviewing itself shares blind spots. Independence is the value — the first slot of a panel, never something a preset moves. When the other CLI is missing, `route` falls back to a fresh native reviewer and says so; a fresh context is the floor, the other family the preference.
 - **Depth and lenses**: one reviewer by default; a panel of two or three lenses for large or risky diffs, proposed with numbers and run only on the user's yes. `review.md`.
+- **The author is named, never assumed.** `route` and `run` take `--author-backend claude|codex|self` for reviewer and verifier; a diff the coordinator wrote itself is `self`, so the same family is never marked independent by default.
 - **Read-only.** Give it the frozen diff (`agent-wt diff`) and the spec. Ask for findings with severity, file:line, the claim, the evidence, and a suggested fix. Ask it to separate "spec mismatch" from "standards" from "nit". Ask it not to restate the diff.
 - **Effort**: high by default; xhigh only in risk zones (auth, payments, migrations).
 
