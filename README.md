@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="delegate-kit" width="260">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
+  <img src="assets/logo.png" alt="delegate-kit, the overseer" width="300">
+</picture>
 
 # delegate-kit
 
@@ -13,21 +16,21 @@ One session, the subscriptions you already pay for, no API keys.
 [![Codex CLI](https://img.shields.io/badge/Codex%20CLI-coordinator%20%7C%20worker-8250df)](https://github.com/openai/codex)
 [![T3 Code](https://img.shields.io/badge/T3%20Code-coordinator-4a4a4a)](https://github.com/pingdotgg/t3code)
 
-[The foreman](#the-foreman) · [Before / after](#before--after) · [Numbers](#numbers) · [How it works](#how-it-works) · [Install](#install) · [Commands](#commands) · [FAQ](#faq)
+[The overseer](#the-overseer) · [Before / after](#before--after) · [Numbers](#numbers) · [How it works](#how-it-works) · [Install](#install) · [Commands](#commands) · [FAQ](#faq)
 
 </div>
 
 ---
 
-## The foreman
+## The overseer
 
-You know her. Hard hat, clipboard, two crews on speed dial — one from Anthropic, one from OpenAI. She has run sites long enough to hold two rules that never bend.
+You know him. Linen kilt, whip on the hip, squinting at the plateau since before the first course of stone went down. Two gangs answer to him — one hauls for Anthropic, one for OpenAI — and he has run them long enough to hold two rules that never bend.
 
-**Nobody signs off on their own concrete.** The crew that poured it does not inspect it. The other crew does, with the drawings in hand, and the sheet says who looked.
+**No gang inspects its own stones.** The gang that set the block does not check the block. The other gang does, with the plans in hand, and the tally says who looked.
 
-**You don't call a crew to change a light bulb.** Three files and a clear ask, she does it herself. Ten modules and a page of prose, she draws a plan before anyone touches a tool. Two jobs that don't share a wall, two crews at once, each behind its own tape.
+**You don't crack the whip for one brick.** Three files and a clear ask, he lays it himself. Ten modules and a page of prose, he draws the plan before anyone picks up a rope. Two jobs that don't share a wall, two gangs at once, each on its own stretch of the ramp.
 
-delegate-kit puts her in your coding session. Your Claude Code or Codex CLI session becomes the coordinator: it keeps the intent, the plan and the answer. Workers are fresh sessions of either family, started once with a full brief, isolated in git worktrees, and reviewed by the family that did not write the code. The whole thing runs on the two CLIs you already have installed and logged in.
+delegate-kit puts him in your coding session. Your Claude Code or Codex CLI session becomes the coordinator: it keeps the intent, the plan and the answer. Workers are fresh sessions of either family, started once with a full brief, isolated in git worktrees, and reviewed by the family that did not write the code. The whole thing runs on the two CLIs you already have installed and logged in.
 
 ## Before / after
 
@@ -35,9 +38,9 @@ You type the same sentence either way:
 
 > change the tariff logic in the billing module — the rules are in `docs/tariffs.md`
 
-**Without her.** The model reads a bit, edits five files in your working tree, runs whatever tests it remembers, and says *done*. If it spawned helpers, two of them edited the same file. The only review is the author reading its own diff, which finds what it already thought of.
+**Without him.** The model reads a bit, edits five files in your working tree, runs whatever tests it remembers, and says *done*. If it spawned helpers, two of them edited the same file. The only review is the author reading its own diff, which finds what it already thought of.
 
-**With her.**
+**With him.**
 
 ```
 shape: PLAN — prose requirements, 2 modules, 11 files
@@ -46,26 +49,28 @@ plan  → planner, read-only, strongest model    (4 steps, 1 blocking question �
 build → implementer on Codex, worktree dk/tariffs, committed
 review → Claude, other family, read-only       (2 findings: 1 spec, 1 correctness)
 fix   → same implementer, resumed              (both closed, tests re-run)
-sheet → done · checked: pnpm test, tsc · not checked: prod migration · reviewed by Claude, single
+tally → done · checked: pnpm test, tsc · not checked: prod migration · reviewed by Claude, single
 ```
 
-Your tree was never touched. You merge the branch when you agree with the sheet.
+Your tree was never touched. You merge the branch when you agree with the tally.
 
-The other direction works the same: when Claude implements, Codex reads the diff. When you wrote the diff yourself in the session, she still sends it across the street — a change the coordinator made is `self`, never "independent by default".
+The other direction works the same: when Claude implements, Codex reads the diff. When you wrote the diff yourself in the session, he still sends it across the ramp — a change the coordinator made is `self`, never "independent by default".
 
 ## Numbers
 
-The claim is that a second family sees what the first one does not. Two kinds of evidence, both small and both reproducible from this repository.
+**From the author's own ledger.** Every external worker is recorded in `~/.delegate-kit/ledger.jsonl`. This is the author's, 20 August to 1 September 2026: ten repositories including a production monorepo, every run counted, nothing excluded but the synthetic tests.
 
-**Seeded bugs, two reviewers.** Four small changes, each with two defects planted on purpose (an off-by-one, a spec violation, a units mix-up, a substring match where an exact one was required). Each diff went to one Claude reviewer and one Codex reviewer through `agent-run`, same brief, same spec, no hints. Scored by hand against the planted list.
-
-| | Claude reviewer (Opus, high) | Codex reviewer (Sol, high) | Both together |
+| | Codex reading Claude | Claude reading Codex | Together |
 |---|---|---|---|
-| Planted defects caught | **8 of 8** | **8 of 8** | 8 of 8 |
-| Real defects found beyond the planted list | 5 | 5 | **7** |
-| Wall-clock per review | 1.5–2 min | 2–3 min | in parallel |
+| Cross-family reviews of real diffs | 29 | 17 | **46** |
+| … that came back with at least one **high**-severity finding | 12 | 5 | **17** |
+| … that came back with nothing | 1 | 0 | 1 |
+| Median findings per review | 4 | 6 | |
+| Median wall-clock per review | 6 min | 9 min | |
 
-On diffs this small, one competent reviewer of either family catches the planted set, so this run does not prove the "shared blind spots" claim; it bounds it. Where the two differed was in the unplanted findings: two came from Claude alone (a wrong error class, an expiry boundary), two from Codex alone (a permissive base64url decoder, sparse-array validation), three from both. A second family costs one more session and buys a longer list. The diffs, briefs, planted list, runner and raw results are in [`bench/seeded-review/`](bench/seeded-review/); `run.sh` repeats the experiment on your own subscriptions.
+Around it: 108 external workers in those twelve days, 39 finished implementer runs at a median of 13 minutes each, 6 planner runs at a median of 7.
+
+The findings are what the reviewer returned, not what survived adjudication: the coordinator closes the mechanical ones, the implementer the substantive ones, disputes go to a command first. So the table says something narrower than "bugs prevented", and still worth the second session: on a real diff, the family that did not write it comes back with something serious about one time in three. `bench/ledger-stats.sh` prints the same table from your own ledger.
 
 **Mechanics that hold under load.** The scripts are tested without any model calls, so the numbers are cheap to reproduce: `bash tests/<name>.sh` in `skills/delegate-kit/`.
 
@@ -81,7 +86,7 @@ On diffs this small, one competent reviewer of either family catches the planted
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/how-it-works-dark.svg">
-  <img src="assets/how-it-works-light.svg" alt="shape → build in worktrees → the other family reviews → sign-off sheet" width="100%">
+  <img src="assets/how-it-works-light.svg" alt="shape → build in worktrees → the other family reviews → tally" width="100%">
 </picture>
 
 **1 · Shape.** Before anything else the coordinator names the shape of the task, from numbers, not mood:
@@ -97,12 +102,12 @@ On diffs this small, one competent reviewer of either family catches the planted
 
 Worker count equals the number of independent outcomes. Coupled edits stay in one pair of hands; split, they come back as merge conflicts and two designs.
 
-**2 · Build.** Every writer gets a git worktree with a lock. Native workers (a subagent of your host, same family, steerable) and external workers (a headless `claude -p` / `codex exec` of the other family, launched once, collected once) are named as such and never confused. Three writers run at once by default; the ceiling is eight, and between the two she states the partition and waits for your yes.
+**2 · Build.** Every writer gets a git worktree with a lock. Native workers (a subagent of your host, same family, steerable) and external workers (a headless `claude -p` / `codex exec` of the other family, launched once, collected once) are named as such and never confused. Three writers run at once by default; the ceiling is eight, and between the two he states the partition and waits for your yes.
 
 **3 · Review.** The author of a non-trivial change does not certify it. Independence has an order of preference, not a hard requirement:
 
 1. **The other family than the author**, whenever its CLI is installed.
-2. **A fresh session of the author's family** when it is not — marked `independent: false`, and the sheet says so.
+2. **A fresh session of the author's family** when it is not — marked `independent: false`, and the tally says so.
 
 Depth is measured from the diff, and anything beyond one reviewer is proposed with the numbers and run on your yes:
 
@@ -114,9 +119,9 @@ Depth is measured from the diff, and anything beyond one reviewer is proposed wi
 
 Findings go back to whoever can close them: mechanical ones the coordinator fixes, substantive ones return to the same implementer, resumed with its context. A dispute is settled by a command first — a test, a typecheck, a grep — and only then by a verifier.
 
-**4 · Sign-off.** Every worker returns one JSON object: `status`, `changes`, `checks_run`, `not_verified`, `findings`, `questions`. The coordinator's report is built from it: done, checked, not checked, open, which family reviewed at which depth. A check that did not run is reported as not run. A worker's "done" is evidence to inspect, not a verdict.
+**4 · Tally.** Every worker returns one JSON object: `status`, `changes`, `checks_run`, `not_verified`, `findings`, `questions`. The coordinator's report is built from it: done, checked, not checked, open, which family reviewed at which depth. A check that did not run is reported as not run. A worker's "done" is evidence to inspect, not a verdict.
 
-**Limits she keeps.** Writer cap 3, ceiling 8, total workers = writers + 3, delegation depth 1 — a worker never starts workers, and the safety hook denies it if one tries. When a subscription hits its limit mid-run, the writer is retried once on the other family with a note about the commits the first one left; it continues, it does not start over.
+**Limits he keeps.** Writer cap 3, ceiling 8, total workers = writers + 3, delegation depth 1 — a worker never starts workers, and the safety hook denies it if one tries. When a subscription hits its limit mid-run, the writer is retried once on the other family with a note about the commits the first one left; it continues, it does not start over.
 
 ## Install
 
@@ -152,7 +157,7 @@ Restart running `claude` / `codex` sessions. The symlinks keep it live: `git pul
 
 **Hosts.** Claude Code and Codex CLI act as coordinator and as worker. [T3 Code](https://github.com/pingdotgg/t3code) acts as coordinator over either CLI; its workers are the same two families.
 
-**Always on.** The skill triggers on its own words (see [Talking to her](#talking-to-her)). To have it triage every non-trivial task, add one line to your global instructions:
+**Always on.** The skill triggers on its own words (see [Talking to him](#talking-to-him)). To have it triage every non-trivial task, add one line to your global instructions:
 
 ```text
 Before repository work described in prose or spanning several modules, apply delegate-kit; a DIRECT verdict needs no announcement.
@@ -162,7 +167,7 @@ Before repository work described in prose or spanning several modules, apply del
 
 ## Commands
 
-Work as usual; she triggers on her own words. When you want to drive a step by hand, the two scripts are the whole surface. `--help` on either is the flag reference.
+Work as usual; he triggers on his own words. When you want to drive a step by hand, the two scripts are the whole surface. `--help` on either is the flag reference.
 
 | Command | Does |
 |---|---|
@@ -221,14 +226,15 @@ skills/delegate-kit/
   scripts/agent-wt              create / list / status / diff / lock / release / remove / cleanup
   hooks/gate.sh, install.sh, uninstall.sh
   tests/*.sh                    caps, route, gate, inspect, delivery — synthetic, no model calls
-bench/seeded-review/            the planted-defect review experiment: diffs, briefs, runner, results
+bench/ledger-stats.sh           the Numbers table, from your own ledger
+bench/seeded-review/            a small planted-defect harness for reviewer experiments (pilot results inside)
 ```
 
 </details>
 
-## Talking to her
+## Talking to him
 
-| You say | She does |
+| You say | He does |
 |---|---|
 | "delegate", "subagent", "scout", "plan this", "review this", "second opinion" | picks a shape and says which |
 | a feature or refactor described in prose; "which should we adopt?" | PLAN |
@@ -243,12 +249,12 @@ bench/seeded-review/            the planted-defect review experiment: diffs, bri
 
 If you interview yourself first (a grill skill, a spec session), save the outcome as `.scratch/<task>/spec.md`. Workers and the reviewer read that file, not a retelling.
 
-## What she won't do
+## What he won't do
 
 - **Steer an external worker mid-run.** Headless sessions run to completion; you read the result and resume. That is why native is preferred inside the family, and why an external worker is never called a subagent.
 - **Run a swarm.** Writer cap 3, ceiling 8, and the ceiling holds against every flag. Between the two it takes a stated partition and your yes.
 - **Make delegation cheap.** A worker is a full session. The shapes exist so you pay for one only for independence, parallelism or a clean context.
-- **Sandbox by herself.** The gate is a list of dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree.
+- **Sandbox by himself.** The gate is a list of dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree.
 - **Route other people's subscriptions.** Workers run through the official CLIs with the logins you already have — ordinary use of Claude Code and Codex. Do not wrap this into a product that does otherwise.
 
 ## FAQ
@@ -257,7 +263,7 @@ If you interview yourself first (a grill skill, a spec session), save the outcom
 Less so. You still get the shapes, the worktrees, the caps and the report, and review falls back to a fresh session of your own family, honestly labelled. But the reason to install this over a good single-family workflow such as [Superpowers](https://github.com/obra/superpowers) is the second family. Without it, Superpowers is the more mature choice.
 
 **How is this different from Claude Code agent teams?**
-Agent teams are Claude talking to Claude: teammates share a task list and message each other. delegate-kit is about the *other* family reading your diff, about one writer per worktree, and about a report that names what was not checked. They are not exclusive; the foreman does not care how a native worker was spawned, only that it stayed behind its tape.
+Agent teams are Claude talking to Claude: teammates share a task list and message each other. delegate-kit is about the *other* family reading your diff, about one writer per worktree, and about a report that names what was not checked. They are not exclusive; the overseer does not care how a native worker was spawned, only that it stayed on its own stretch of the ramp.
 
 **Why not an API key and a multi-model MCP server?**
 Because you already pay for two CLIs with their own sandboxes, rate limits and logins. `claude -p` and `codex exec` are official, headless, and free with the subscription. The price is that an external worker cannot be steered mid-run, which the shapes are designed around.
