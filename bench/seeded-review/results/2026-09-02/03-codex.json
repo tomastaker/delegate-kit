@@ -1,0 +1,70 @@
+{
+  "status": "done",
+  "summary": "Found four confirmed defects: allocation can lose or invent money, invalid add operands are accepted, non-integer ratios receive the wrong error type, and sparse ratio arrays bypass validation. The existing tests pass but do not exercise these contract requirements.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 3 tests passed.",
+    "Focused node probes: confirmed add accepts floats, strings, and Infinity; non-integer ratios throw RangeError; uneven allocations do not preserve totals.",
+    "Sparse-array probe: allocate(10, Array(1)) returned a one-element sparse result whose sum is 0.",
+    "git status --short: could not complete because the read-only sandbox prevented xcrun from creating a temporary cache."
+  ],
+  "not_verified": [
+    "Working-tree cleanliness was not confirmed; the review used the supplied frozen diff and checked-out files."
+  ],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": null,
+      "file": "src/money.js",
+      "line": 11,
+      "claim": "Rounding every proportional share independently violates the mandatory exact-total and ordered-remainder behavior.",
+      "evidence": "The spec requires parts to sum exactly to total and assigns remainder units in party order. allocate(1, [1, 1]) returns [1, 1], summing to 2; allocate(10, [1, 1, 1]) returns [3, 3, 3], summing to 9 instead of the ordered result [4, 3, 3].",
+      "suggested_fix": "Calculate base shares, determine the signed difference from total, and adjust parties in order one unit at a time until the parts sum exactly to total. Add regression tests for both lost and invented units, including negative totals if supported.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": null,
+      "file": "src/money.js",
+      "line": 2,
+      "claim": "add does not throw TypeError for most non-integer operands.",
+      "evidence": "The spec explicitly covers floats, NaN, and strings, but the guard only rejects NaN. add(1.5, 2) returns 3.5, add(\"1\", 2) returns \"12\", and add(Infinity, 2) returns Infinity.",
+      "suggested_fix": "Validate both operands with Number.isInteger before performing addition, and add tests for floats, strings, NaN, Infinity, and missing operands.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": null,
+      "file": "src/money.js",
+      "line": 9,
+      "claim": "allocate throws RangeError rather than TypeError for non-integer ratio values.",
+      "evidence": "The spec requires TypeError for any non-integer input and reserves RangeError for empty ratios or non-positive values. allocate(10, [1.5, 1]) and allocate(10, [\"1\", 1]) both throw RangeError.",
+      "suggested_fix": "Separate ratio validation: throw TypeError when an entry is not an integer, then throw RangeError when an integer entry is non-positive. Test the exact error classes.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "low",
+      "kind": "correctness",
+      "lens": null,
+      "file": "src/money.js",
+      "line": 9,
+      "claim": "Sparse ratio arrays bypass validation and produce invalid sparse allocations.",
+      "evidence": "Array.prototype.some, reduce, and map skip holes. allocate(10, Array(1)) returns a sparse array of length 1 whose numeric sum is 0, even though every ratio must be a positive integer and the result must sum to 10.",
+      "suggested_fix": "Validate every numeric index explicitly, treating missing entries as invalid non-integer ratios, and add a sparse-array regression test.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Fix the four confirmed defects and add regression tests for each contract boundary before merge."
+  ]
+}

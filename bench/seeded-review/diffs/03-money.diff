@@ -1,0 +1,142 @@
+diff --git a/review/02-ratelimit.diff b/review/02-ratelimit.diff
+new file mode 100644
+index 0000000..2e891cd
+--- /dev/null
++++ b/review/02-ratelimit.diff
+@@ -0,0 +1,97 @@
++diff --git a/review/01-pagination.diff b/review/01-pagination.diff
++new file mode 100644
++index 0000000..4610228
++--- /dev/null
+++++ b/review/01-pagination.diff
++@@ -0,0 +1,49 @@
+++diff --git a/spec/pagination.md b/spec/pagination.md
+++new file mode 100644
+++index 0000000..7e84526
+++--- /dev/null
++++++ b/spec/pagination.md
+++@@ -0,0 +1,7 @@
++++# Cursor pagination
++++- `page(items, {size, cursor})` returns `{items, nextCursor, totalPages}`.
++++- `size` is an integer 1..100; anything else throws ShopError("InvalidSize").
++++- `totalPages` = number of pages needed for `items.length` at `size` (0 items → 0 pages).
++++- `cursor` is base64url of JSON `{"offset": n}`; absent cursor means offset 0.
++++- A cursor that does not decode to an integer offset within `0..items.length` throws ShopError("InvalidCursor").
++++- `nextCursor` is null on the last page.
+++diff --git a/src/pagination.js b/src/pagination.js
+++new file mode 100644
+++index 0000000..a108a1c
+++--- /dev/null
++++++ b/src/pagination.js
+++@@ -0,0 +1,19 @@
++++import { ShopError } from "./errors.js";
++++
++++const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
++++const dec = (c) => JSON.parse(Buffer.from(c, "base64url").toString("utf8"));
++++
++++export function page(items, { size, cursor } = {}) {
++++  if (!Number.isInteger(size) || size < 1 || size > 100) throw new ShopError("InvalidSize", `size ${size}`);
++++  let offset = 0;
++++  if (cursor != null) {
++++    try { offset = dec(cursor).offset; } catch { throw new ShopError("InvalidCursor", "undecodable"); }
++++  }
++++  const slice = items.slice(offset, offset + size);
++++  const end = offset + size;
++++  return {
++++    items: slice,
++++    nextCursor: end < items.length ? enc({ offset: end }) : null,
++++    totalPages: items.length === 0 ? 0 : Math.floor(items.length / size) + 1,
++++  };
++++}
+++diff --git a/test/pagination.test.js b/test/pagination.test.js
+++new file mode 100644
+++index 0000000..67c8c56
+++--- /dev/null
++++++ b/test/pagination.test.js
+++@@ -0,0 +1,5 @@
++++import test from "node:test"; import assert from "node:assert/strict";
++++import { page } from "../src/pagination.js";
++++test("first page", () => { const r = page([1,2,3,4,5], { size: 2 }); assert.deepEqual(r.items, [1,2]); assert.ok(r.nextCursor); });
++++test("follows cursor", () => { const a = page([1,2,3], { size: 2 }); const b = page([1,2,3], { size: 2, cursor: a.nextCursor }); assert.deepEqual(b.items, [3]); assert.equal(b.nextCursor, null); });
++++test("bad size", () => { assert.throws(() => page([], { size: 0 })); });
++diff --git a/spec/ratelimit.md b/spec/ratelimit.md
++new file mode 100644
++index 0000000..dc2ae7f
++--- /dev/null
+++++ b/spec/ratelimit.md
++@@ -0,0 +1,6 @@
+++# Sliding-window rate limiter
+++- `createLimiter({limit, windowMs})` returns `hit(key, now = Date.now())`.
+++- Keys are opaque, case-sensitive strings; two keys that differ in any character are different keys.
+++- `hit` returns `{allowed: true}` while fewer than `limit` hits fall inside the last `windowMs`.
+++- Otherwise `{allowed: false, retryAfterMs}` where `retryAfterMs` is the time until the OLDEST hit in the window leaves it (so the caller waits the minimum, not the whole window).
+++- Hits outside the window are dropped from memory so state does not grow with time.
++diff --git a/src/ratelimit.js b/src/ratelimit.js
++new file mode 100644
++index 0000000..12a9bfd
++--- /dev/null
+++++ b/src/ratelimit.js
++@@ -0,0 +1,14 @@
+++export function createLimiter({ limit, windowMs }) {
+++  const hits = new Map();
+++  return function hit(key, now = Date.now()) {
+++    const k = key.toLowerCase();
+++    const list = (hits.get(k) ?? []).filter((t) => now - t < windowMs);
+++    if (list.length >= limit) {
+++      hits.set(k, list);
+++      return { allowed: false, retryAfterMs: windowMs };
+++    }
+++    list.push(now);
+++    hits.set(k, list);
+++    return { allowed: true };
+++  };
+++}
++diff --git a/test/ratelimit.test.js b/test/ratelimit.test.js
++new file mode 100644
++index 0000000..79f2801
++--- /dev/null
+++++ b/test/ratelimit.test.js
++@@ -0,0 +1,4 @@
+++import test from "node:test"; import assert from "node:assert/strict";
+++import { createLimiter } from "../src/ratelimit.js";
+++test("allows up to limit", () => { const h = createLimiter({ limit: 2, windowMs: 1000 }); assert.ok(h("a", 0).allowed); assert.ok(h("a", 1).allowed); assert.equal(h("a", 2).allowed, false); });
+++test("window slides", () => { const h = createLimiter({ limit: 1, windowMs: 1000 }); h("a", 0); assert.ok(h("a", 1000).allowed); });
+diff --git a/spec/money.md b/spec/money.md
+new file mode 100644
+index 0000000..d25dd39
+--- /dev/null
++++ b/spec/money.md
+@@ -0,0 +1,4 @@
++# Money helpers
++- All amounts are integers in minor units. `add(a, b)` and `allocate` throw TypeError on any non-integer input (floats, NaN, strings).
++- `allocate(total, ratios)` splits `total` proportionally to `ratios` (positive integers). The parts MUST sum exactly to `total`: distribute the remainder one unit at a time to the parties in order, never lose or invent a unit.
++- `allocate` throws RangeError when `ratios` is empty or contains a non-positive value.
+diff --git a/src/money.js b/src/money.js
+new file mode 100644
+index 0000000..69f6427
+--- /dev/null
++++ b/src/money.js
+@@ -0,0 +1,12 @@
++export function add(a, b) {
++  if (Number.isNaN(a) || Number.isNaN(b)) throw new TypeError("NaN amount");
++  return a + b;
++}
++
++export function allocate(total, ratios) {
++  if (!Number.isInteger(total)) throw new TypeError("total must be an integer");
++  if (!Array.isArray(ratios) || ratios.length === 0) throw new RangeError("ratios empty");
++  if (ratios.some((r) => !Number.isInteger(r) || r <= 0)) throw new RangeError("ratio must be a positive integer");
++  const sum = ratios.reduce((s, r) => s + r, 0);
++  return ratios.map((r) => Math.round((total * r) / sum));
++}
+diff --git a/test/money.test.js b/test/money.test.js
+new file mode 100644
+index 0000000..dc55ed2
+--- /dev/null
++++ b/test/money.test.js
+@@ -0,0 +1,5 @@
++import test from "node:test"; import assert from "node:assert/strict";
++import { add, allocate } from "../src/money.js";
++test("add", () => assert.equal(add(150, 250), 400));
++test("allocate even", () => assert.deepEqual(allocate(100, [1, 1]), [50, 50]));
++test("allocate rejects empty", () => assert.throws(() => allocate(100, [])));

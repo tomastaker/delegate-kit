@@ -16,7 +16,7 @@ jobs:
       - name: Bash syntax + shellcheck
         run: |
           sudo apt-get install -y -qq shellcheck >/dev/null
-          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt"
+          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt bench/seeded-review/run.sh bench/ledger-stats.sh"
           for f in $files; do bash -n "$f"; done
           shellcheck -S warning $files
       - name: Node syntax

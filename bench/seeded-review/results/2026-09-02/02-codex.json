@@ -1,0 +1,55 @@
+{
+  "status": "done",
+  "summary": "Found three confirmed spec defects. Key normalization merges distinct callers, retry timing is overstated, and expired state can remain indefinitely. The existing test suite passes but does not cover these requirements.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 2 tests passed",
+    "Case-sensitivity probe: \"A\" was allowed, then distinct key \"a\" was incorrectly denied",
+    "Retry probe: returned 1000ms where the oldest hit required 800ms",
+    "Stale-state probe: expired key \"stale\" and timestamp 0 remained after a hit at time 1001",
+    "git status --short && git diff --check: exited 0 with no worktree changes or diff errors; emitted sandbox-related xcrun cache warnings"
+  ],
+  "not_verified": [],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/ratelimit.js",
+      "line": 4,
+      "claim": "Lowercasing keys violates the required opaque, case-sensitive key identity and lets traffic for one key consume another key's quota.",
+      "evidence": "The spec says keys differing in any character are distinct. A focused probe with limit 1 allowed \"A\" at time 0 but denied \"a\" at time 1 because both mapped to \"a\".",
+      "suggested_fix": "Use the original key as the Map key without normalization, and add a regression test proving \"A\" and \"a\" have independent limits.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/ratelimit.js",
+      "line": 8,
+      "claim": "A rejected hit always receives the full window duration instead of the minimum delay until the oldest active hit expires.",
+      "evidence": "With windowMs 1000, accepted hits at 0 and 100, and a rejected hit at 200, the oldest hit expires after 800ms; the implementation returned retryAfterMs 1000.",
+      "suggested_fix": "Return `list[0] + windowMs - now` and add a regression test using staggered timestamps.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/ratelimit.js",
+      "line": 5,
+      "claim": "Expired hits are pruned only when their own key is used again, so one-time keys and their timestamp arrays remain in the Map indefinitely and state grows with unique keys.",
+      "evidence": "All reads and writes target only `k`. After recording \"stale\" at time 0 and hitting \"fresh\" at time 1001 with a 1000ms window, instrumentation showed both keys remained and \"stale\" still stored timestamp 0.",
+      "suggested_fix": "Expire entries across stored keys as time advances and delete keys whose active-hit list becomes empty; add a regression test that inspects retained state through an appropriate test seam.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": []
+}
