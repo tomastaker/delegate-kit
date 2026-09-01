@@ -35,6 +35,11 @@ ok "note называет коммит" "$(jq -r '.note' <<<"$OUT" | grep -c 'ad
 ok "note называет грязные файлы" "$(jq -r '.note' <<<"$OUT" | grep -c 'M a.txt, ?? b.txt')" "1"
 ok "note велит читать и продолжать" "$(jq -r '.note' <<<"$OUT" | grep -c 'continue from it')" "1"
 
+echo "── файлы в новом каталоге перечислены поимённо"
+mkdir -p "$W/src/new"; echo c > "$W/src/new/c.txt"; echo d > "$W/src/new/d.txt"
+ok "два файла, не один каталог" "$(node "$AR" inspect "$W" | jq -r '[.dirty[]|select(.path|startswith("src/new/"))|.path]|sort|join(" ")')" "src/new/c.txt src/new/d.txt"
+rm -rf "$W/src"
+
 echo "── без базы считаются только грязные файлы"
 rm "$BASE/repo/.git/worktrees/slice/delegate-kit.base"
 ok "base=null, коммиты не считаются, грязные видны" "$(node "$AR" inspect "$W" | jq -r '[(.base|tostring),(.commits|length),(.dirty|length),.partial]|join(" ")')" "null 0 2 true"
