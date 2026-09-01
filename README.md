@@ -21,7 +21,7 @@ One skill for Claude Code, T3 Code and Codex CLI. Your logins, your subscription
 
 Capable models already delegate. What they do inconsistently is *when* and *how*: a one-line fix spawns a 50k-token worker, a ten-module feature starts with no plan, three subagents share one working tree, and the author approves its own diff. delegate-kit makes one decision the same every time:
 
-> **Do it here, send one scout, plan first, one worker, two or three in parallel, or a sequence — and who reviews the result.**
+> **Do it here, send one scout, plan first, one worker, a few in parallel, or a sequence — and who reviews the result.**
 
 | Without | With |
 |---|---|
@@ -78,10 +78,10 @@ Two kinds of worker, never confused:
 | **SCOUT** | the hard part is *finding*: a large repo, several plausible causes, docs to quote | one read-only worker, then decide again |
 | **PLAN** | prose requirements, ambiguity, > 1 module or > ~10 files; any question that ends in a verdict | planner, read-only, strongest model |
 | **SINGLE** | one vertical slice too big for DIRECT | one implementer in its own worktree |
-| **PARALLEL** | 2–3 slices with disjoint write scopes and stable interfaces | one implementer per slice, each in a worktree |
+| **PARALLEL** | 2+ slices with disjoint write scopes and stable interfaces | one implementer per slice, each in a worktree |
 | **SEQUENTIAL** | one result changes the next task's assumptions (schema → API → UI) | one worker at a time, resumed |
 
-Limits: 2 writers, 4 workers, delegation depth 1. Repository size changes the cost of *finding* context, not the number of writers.
+Limits: writer cap 3, ceiling 8, workers = writers + 3, delegation depth 1. Raising the cap is a per-task decision: the coordinator names the partition (one ticket per writer, disjoint write scopes), you say yes, and `--max-writers N` carries it. Repository size changes the cost of *finding* context, not the number of writers.
 
 ## Review
 
@@ -183,7 +183,7 @@ agent-run resume <implementer-id> --prompt "Fix findings 1 and 3: ..."
 agent-run list | status <id> | wait <id> | kill <id> | log <id> | notify [<id>]
 ```
 
-Two writers in parallel: `--detach` on each, then `agent-run wait <id>` or `--on-finish CMD` so each reports for itself. A native writer: `agent-wt lock <task>` before dispatch, `agent-wt release <task>` after. `--help` on either script is the flag reference.
+Several writers in parallel: `--detach` on each, then `agent-run wait <id>` or `--on-finish CMD` so each reports for itself. A native writer: `agent-wt lock <task>` before dispatch, `agent-wt release <task>` after. Both commands refuse a writer past the cap (`--max-writers N` or `DELEGATE_KIT_MAX_WRITERS` raise it, up to the ceiling of 8); a refused `--detach` run is reported to the parent. `--help` on either script is the flag reference.
 
 </details>
 
@@ -212,7 +212,7 @@ skills/delegate-kit/
 ## What it will not do
 
 - **Steer an external worker mid-run** — headless sessions run to completion; you read the result and resume. That is why native is preferred inside the family, and why an external worker is never called a subagent.
-- **Run a swarm** — two writers, four workers. Larger fleets need an unusually clear partition and your explicit ask.
+- **Run a swarm** — writer cap 3, ceiling 8, and the ceiling holds against every flag. Between the two it takes a stated partition and your yes, passed as `--max-writers N`.
 - **Make delegation cheap** — a worker is a full session; the shapes exist so you pay for it only for independence, parallelism or a clean context.
 - **Sandbox by itself** — the gate is a list of dangerous command shapes; the real isolation is the CLIs' own sandboxes plus the worktree.
 

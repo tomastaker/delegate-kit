@@ -9,7 +9,9 @@ agent-wt create <name> [--base REF]   create worktree + branch dk/<name> (defaul
 agent-wt list                         list worktrees with lock/owner/status
 agent-wt status <name>                path, branch, lock, dirty files, commits ahead of base
 agent-wt diff <name> [--base REF]     frozen diff: base..HEAD plus uncommitted changes
-agent-wt lock <name> [--label TXT]    take the write-lock for a native subagent the parent spawns itself
+agent-wt lock <name> [--label TXT] [--max-writers N]
+                                      take the write-lock for a native subagent the parent spawns itself;
+                                      refuses past the writer cap (3 by default, ceiling 8; DELEGATE_KIT_MAX_WRITERS)
 agent-wt release <name> [--force]     remove the write-lock (only if its process is gone or --force)
 agent-wt remove <name> [--force]      remove worktree and branch (refuses if locked or dirty unless --force)
 agent-wt cleanup                      remove worktrees whose branch is merged into the base and are unlocked
@@ -95,16 +97,44 @@ cmd_diff() {
   (cd "$p" && git add -N . >/dev/null 2>&1 || true; git diff "$base")
 }
 
+# Writer cap, shared with agent-run: 3 by default, 8 at most. A native lock is a writer
+# the parent runs itself, so it counts like an external one. The count here is per
+# repository: every locked worktree of this checkout, native or live process.
+WRITERS_DEFAULT=3; WRITERS_CEILING=8
+writer_cap() {
+  local v="$1" from="$2"
+  [ -n "$v" ] || { echo "$WRITERS_DEFAULT"; return; }
+  [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -ge 1 ] || die "$from must be an integer from 1 to $WRITERS_CEILING (got $v)"
+  [ "$v" -le "$WRITERS_CEILING" ] || die "$from=$v is above the ceiling of $WRITERS_CEILING writers; the ceiling holds against every flag. Split the work into waves."
+  echo "$v"
+}
+locked_worktrees() {
+  local base; base=$(wt_base_dir); [ -d "$base" ] || return 0
+  for p in "$base"/*/; do
+    [ -d "$p" ] || continue
+    local n; n=$(basename "$p")
+    [[ "$(lock_info "$n")" == locked* ]] && echo "$n"
+  done
+  return 0
+}
+
 cmd_lock() {
   local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
-  local label="native-subagent"
-  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; *) die "unknown option $1";; esac; done
+  local label="native-subagent" cap_flag=""
+  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; --max-writers) cap_flag=${2:-}; [ -n "$cap_flag" ] || die "--max-writers needs a number"; shift 2;; *) die "unknown option $1";; esac; done
   local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name (create it first)"
   local lf; lf=$(lock_file "$name")
   if [ -f "$lf" ]; then
     local info; info=$(lock_info "$name")
     [[ "$info" == locked* ]] && die "worktree is already $info; one writer per worktree"
     rm -f "$lf"   # stale process lock
+  fi
+  local cap
+  if [ -n "$cap_flag" ]; then cap=$(writer_cap "$cap_flag" "--max-writers"); else cap=$(writer_cap "${DELEGATE_KIT_MAX_WRITERS:-}" "DELEGATE_KIT_MAX_WRITERS"); fi
+  local held; held=$(locked_worktrees | tr '\n' ' '); held=${held% }
+  local n=0; [ -n "$held" ] && n=$(wc -w <<<"$held" | tr -d ' ')
+  if [ "$n" -ge "$cap" ]; then
+    die "max $cap concurrent writers reached in this repository ($held). Raising the cap is a per-task decision: state the partition — one ticket per writer, disjoint write scopes — get the user's yes, then --max-writers N (ceiling $WRITERS_CEILING) or DELEGATE_KIT_MAX_WRITERS for the session."
   fi
   jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{id:$id,kind:"native",label:$label,role:"implementer",pid:null,cwd:$cwd,since:$since}' > "$lf"
