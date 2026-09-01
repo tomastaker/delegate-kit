@@ -239,6 +239,36 @@ function nativeWriterLocks(cwd) {
   });
 }
 
+/*
+ * Что осталось в worktree от прерванного прогона.
+ *
+ * Quota fallback перезапускал тот же бриф в том же worktree, а лимит может
+ * сработать после коммитов и незакоммиченных правок первого воркера — второй
+ * начинал вслепую и переделывал или ломал сделанное. База берётся из
+ * delegate-kit.base, который пишет `agent-wt create`; без него считаются
+ * только грязные файлы. Тот же снимок печатает `agent-run inspect` — команда
+ * под давнее «read the worktree before rerunning» из документации.
+ */
+function inspectWorktree(cwd) {
+  const g = gitDirOf(cwd);
+  if (!g) return { cwd, git: false, base: null, commits: [], dirty: [], partial: false, note: null };
+  let base = null; try { base = fs.readFileSync(path.join(g, "delegate-kit.base"), "utf8").trim() || null; } catch {}
+  const commits = base ? (sh("git", ["log", "--format=%h%x09%s", `${base}..HEAD`], { cwd }).stdout || "").split("\n").filter(Boolean).map((l) => { const [sha, ...rest] = l.split("\t"); return { sha, subject: rest.join("\t") }; }) : [];
+  const dirty = (sh("git", ["status", "--porcelain"], { cwd }).stdout || "").split("\n").filter(Boolean).map((l) => ({ status: l.slice(0, 2).trim(), path: l.slice(3) }));
+  const partial = commits.length > 0 || dirty.length > 0;
+  return { cwd, git: true, base, commits, dirty, partial, note: partial ? previousAttemptNote({ commits, dirty }) : null };
+}
+function previousAttemptNote({ commits, dirty }) {
+  const c = commits.length ? commits.map((x) => `${x.sha} ${x.subject}`).join("; ") : "none";
+  const d = dirty.length ? dirty.map((x) => `${x.status} ${x.path}`).join(", ") : "none";
+  return `PREVIOUS ATTEMPT: a worker on this same brief stopped mid-run in this worktree. Commits it made since base: ${c}. Uncommitted changes it left: ${d}. Read that work first (git log, git diff) and continue from it: keep what is done, finish what is not, and for the uncommitted changes decide deliberately — keep, finish or revert — and say which in \`summary\`.`;
+}
+function cmdInspect(cwd) {
+  const p = path.resolve(cwd || process.cwd());
+  if (!fs.existsSync(p)) die(`no such directory: ${p}`);
+  process.stdout.write(JSON.stringify(inspectWorktree(p), null, 2) + "\n");
+}
+
 function resolveCaps(opts = {}) {
   const raw = opts["max-writers"] !== undefined ? { v: opts["max-writers"], from: "--max-writers" }
     : process.env.DELEGATE_KIT_MAX_WRITERS ? { v: process.env.DELEGATE_KIT_MAX_WRITERS, from: "DELEGATE_KIT_MAX_WRITERS" } : null;
@@ -906,6 +936,7 @@ async function cmdRun(opts, resumeOf = null) {
   let prompt = opts.prompt;
   if (!prompt && opts.brief) { if (!fs.existsSync(opts.brief)) die(`brief not found: ${opts.brief}`); prompt = fs.readFileSync(opts.brief, "utf8"); }
   if (!prompt) die("provide --brief FILE or --prompt TEXT");
+  const rawBrief = prompt;
   const lens = opts.lens && opts.lens !== true ? String(opts.lens) : null;
   if (lens && !LENSES[lens]) die(`--lens must be ${Object.keys(LENSES).join("|")} (got ${lens})`);
   if (lens && role !== "reviewer") die("--lens applies to --role reviewer only");
@@ -1001,7 +1032,13 @@ async function cmdRun(opts, resumeOf = null) {
       const nb = otherBackend(backend);
       process.stderr.write(`agent-run: ${backend} reported a usage/rate limit; retrying once on ${nb} (fallback). Use --fallback none to disable.\n`);
       m.status = "failed-quota"; saveMeta(m);
-      const next = { ...opts, backend: nb, model: undefined, effort: opts.effort, _fallbackFrom: id, detach: false, id: undefined };
+      // A writer may have committed or left edits before the limit hit: the rerun is told what
+      // it inherits. `ultra` exists on Codex only; the nearest Claude effort is xhigh.
+      const state = write ? inspectWorktree(cwd) : null;
+      const brief = state && state.partial ? `${state.note}\n\n${rawBrief}` : rawBrief;
+      if (state && state.partial) process.stderr.write(`agent-run: the fallback worker inherits ${state.commits.length} commit(s) and ${state.dirty.length} uncommitted file(s) from ${id}; the brief says so.\n`);
+      const effort = opts.effort === "ultra" && nb === "claude" ? "xhigh" : opts.effort;
+      const next = { ...opts, backend: nb, model: undefined, effort, prompt: brief, brief: undefined, _fallbackFrom: id, detach: false, id: undefined };
       await cmdRun(next, null);
       return;
     }
@@ -1061,6 +1098,7 @@ switch (sub) {
   case "kill": cmdKill(argv._[1]); break;
   case "log": cmdLog(argv._[1], argv._[2]); break;
   case "notify": cmdNotify(argv); break;
+  case "inspect": cmdInspect(argv._[1]); break;
   default:
     console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
 
@@ -1078,6 +1116,8 @@ switch (sub) {
   agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
   agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
   agent-run notify [<id>] [--force]       deliver any completion still pending (retries due ones); no id drains all
+  agent-run inspect [<worktree>]          what a stopped worker left: base, commits since base, uncommitted files, and
+                                          the note a fallback rerun of a writer is given about them
 
 --timeout on \`run\` is a fuse against a hung worker, not a schedule; without it the role decides:
 ${Object.entries(ROLE_TIMEOUT_MIN).map(([r, t]) => `${r} ${t}m`).join(", ")}. A run killed by it ends as
