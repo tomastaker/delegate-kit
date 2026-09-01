@@ -1,0 +1,96 @@
+{
+  "status": "done",
+  "summary": "Reviewed src/authz.js, spec/authz.md and test/authz.test.js against spec/authz.md. Two high-severity defects: isExpired compares an exp in seconds against a now in milliseconds, so every realistic token reports as expired; and can() matches roles by substring on a joined string, which both grants unrelated roles (role \"editor\" satisfies can(t,\"edit\")) and treats any role containing \"admin\" (e.g. \"nonadmin\", \"superadmin\") as full admin. Three lower findings cover NaN exp passing the malformed check, the \">= vs >\" expiry boundary, and the test file having zero coverage of isExpired, which is why the unit bug ships green. All four existing tests pass (npm test), so the suite does not catch any of this.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 4 passed, 0 failed (suite is green despite the defects)",
+    "node -e repro of isExpired({exp: 4102444800}) -> true (token valid until year 2100 reported expired)",
+    "node -e repro of can({roles:['editor']}, 'edit') -> true, can({roles:['nonadmin']}, 'delete') -> true, can({roles:['editor']}, '') -> true"
+  ],
+  "not_verified": [
+    "Whether any caller outside this diff already compensates for the seconds/milliseconds mismatch by passing nowMs in seconds — no callers of isExpired exist in the repo yet.",
+    "Intended boundary semantics at exactly exp (spec says 'once exp has passed' without defining the instant)."
+  ],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "correctness",
+      "file": "src/authz.js",
+      "line": 8,
+      "claim": "isExpired compares exp (UNIX seconds) directly to nowMs (milliseconds), so every token with a realistic exp is reported expired.",
+      "evidence": "Spec: \"exp is a UNIX timestamp in SECONDS\" and the parameter is named nowMs. Line 8 is `return token.exp < nowMs;`. Verified: isExpired({sub:'u',exp:4102444800,roles:[]}) -> true with Date.now() = 1788305052784, i.e. a token valid until the year 2100 is treated as expired. The condition only becomes correct around the year 2286. No test exercises isExpired, so npm test stays green.",
+      "suggested_fix": "Convert before comparing: `return token.exp * 1000 <= nowMs;` and add tests for a future exp (false), a past exp (true) and the boundary.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "correctness",
+      "lens": "correctness",
+      "file": "src/authz.js",
+      "line": 14,
+      "claim": "can() tests role membership with String.includes on the comma-joined roles, so a substring of a granted role authorises an ungranted role.",
+      "evidence": "Spec: \"can(token, role) is true only when roles contains exactly role\". Lines 13-14 join roles into a string and call `roles.includes(role)`. Verified: can({roles:['editor']}, 'edit') -> true, and can({roles:['editor']}, '') -> true. A role like 'r,s' also matches a token holding ['r','s'] because the separator is part of the searched string.",
+      "suggested_fix": "Match array elements, not substrings: `return token.roles.includes('admin') || token.roles.includes(role);` and drop the join.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "correctness",
+      "lens": "correctness",
+      "file": "src/authz.js",
+      "line": 14,
+      "claim": "The admin check is also a substring test, so any role whose name merely contains \"admin\" grants every permission — privilege escalation from a deliberately non-privileged role name.",
+      "evidence": "Spec: admin implies every role only when roles \"contains 'admin'\". Line 14 is `roles.includes(\"admin\") || ...` against the joined string. Verified: can({roles:['nonadmin']}, 'delete') -> true and can({roles:['superadmin']}, 'delete') -> true. A role named 'nonadmin' or 'admin-readonly' therefore confers full admin.",
+      "suggested_fix": "Use exact array membership for the admin bypass: `token.roles.includes('admin')`.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": "correctness",
+      "file": "src/authz.js",
+      "line": 2,
+      "claim": "check() accepts NaN as exp because typeof NaN === 'number', so a malformed token passes validation instead of throwing TypeError.",
+      "evidence": "Spec: \"Both helpers throw TypeError on a malformed token\". Verified: can({sub:'a',exp:NaN,roles:[]},'x') returns false rather than throwing; isExpired on the same token would return false (NaN comparison), silently treating an unusable token as live.",
+      "suggested_fix": "Require a finite number: `!Number.isFinite(token.exp)` in place of the `typeof token.exp !== \"number\"` check.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "low",
+      "kind": "spec",
+      "lens": "correctness",
+      "file": "src/authz.js",
+      "line": 8,
+      "claim": "Expiry boundary uses strict `<`, so a token is still valid at exactly exp; the spec's \"true once exp has passed\" is ambiguous at that instant and should be pinned down.",
+      "evidence": "Line 8: `token.exp < nowMs`. JWT convention (RFC 7519 exp: \"MUST NOT be accepted on or after\") treats exp itself as expired, which argues for `<=` after the unit fix.",
+      "suggested_fix": "Adopt the JWT convention (`token.exp * 1000 <= nowMs`), state it in spec/authz.md, and cover it with a test at exactly exp.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "standards",
+      "lens": "standards",
+      "file": "test/authz.test.js",
+      "line": 2,
+      "claim": "The test file imports isExpired but never tests it, so the seconds/milliseconds defect ships with a green suite.",
+      "evidence": "test/authz.test.js line 2 imports { isExpired, can }; the four tests (lines 4-7) only call can(). npm test reports 4 pass / 0 fail while isExpired is wrong for every realistic input. The can() tests also miss the substring cases ('edit' vs 'editor', 'nonadmin').",
+      "suggested_fix": "Add isExpired tests (future exp false, past exp true, boundary) and negative can() tests for a role that is a prefix of a granted role and for a role name containing 'admin'.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Fix the unit conversion in isExpired and replace the joined-string matching in can() with array membership.",
+    "Decide and document the boundary semantics at exactly exp in spec/authz.md.",
+    "Extend test/authz.test.js with the isExpired cases and the substring/admin-lookalike negative cases before re-running npm test."
+  ]
+}

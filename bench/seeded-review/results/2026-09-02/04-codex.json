@@ -1,0 +1,55 @@
+{
+  "status": "done",
+  "summary": "Found three merge-blocking authz defects: timestamp units are mixed, role checks use substring matching, and malformed token contents bypass validation. The existing test suite passes all 4 tests but does not exercise these cases.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 4 passed, 0 failed.",
+    "Read-only Node probe: reproduced futureExpired=true, substringRole=true, superadminAll=true, and acceptance of non-string roles and NaN expiration.",
+    "Inspected the frozen 193-line diff, authz spec, implementation, tests, package configuration, and repository file list."
+  ],
+  "not_verified": [],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/authz.js",
+      "line": 8,
+      "claim": "isExpired compares a seconds-based expiration directly with a millisecond timestamp, causing valid JWT-style tokens to be reported as expired.",
+      "evidence": "The spec defines exp in seconds and nowMs in milliseconds. With exp=4102444800 and nowMs=1700000000000, isExpired returns true even though the token expires in 2100.",
+      "suggested_fix": "Compare nowMs against token.exp * 1000 and expire at the boundary, for example `return nowMs >= token.exp * 1000`; add tests before, at, and after expiration.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/authz.js",
+      "line": 14,
+      "claim": "can performs substring matching instead of exact role membership, allowing unauthorized roles to satisfy requested permissions and allowing names containing \"admin\" to imply every role.",
+      "evidence": "Joining roles and calling String.includes makes roles=[\"editorial\"] authorize \"editor\" and roles=[\"superadmin\"] authorize \"delete\". Both were reproduced by the read-only probe and contradict the exact-match requirement.",
+      "suggested_fix": "Use `token.roles.includes(\"admin\") || token.roles.includes(role)` directly and add regression tests for partial role names, admin-containing names, empty roles, and exact admin.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/authz.js",
+      "line": 2,
+      "claim": "Token validation accepts malformed role elements and non-finite expiration values, so both helpers can return normally instead of throwing TypeError for values that do not satisfy the declared token shape.",
+      "evidence": "The validator only checks Array.isArray and `typeof exp === \"number\"`. A token with roles=[42] was accepted by both helpers, and exp=NaN was accepted by isExpired without throwing; neither value is a valid roles:string[] or UNIX timestamp.",
+      "suggested_fix": "Require a finite numeric expiration and validate every array entry as a string, including sparse entries, before either helper proceeds; add malformed-token tests for both exported helpers.",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Correct all three findings and add focused regression tests before merge."
+  ]
+}

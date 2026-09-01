@@ -1,0 +1,60 @@
+{
+  "status": "done",
+  "summary": "Reviewed src/pagination.js and test/pagination.test.js against spec/pagination.md. Two spec-contradicting defects: totalPages uses Math.floor(len/size)+1 instead of ceil, so it over-reports by one whenever items.length is an exact multiple of size (including len==size); and the decoded cursor offset is never validated, so the InvalidCursor rule for out-of-range or non-integer offsets is unimplemented and a crafted cursor produces empty or misaligned pages — with offset -2 the returned nextCursor points back at offset 0, restarting pagination. Tests pass (3/3) but cover neither totalPages nor cursor validation, which is why both defects ship green. All findings were reproduced by executing the module.",
+  "changes": [],
+  "checks_run": [
+    "npm test: 3 passed, 0 failed",
+    "node -e (direct calls to page): totalPages off-by-one reproduced for len=4/size=2 (reported 3, actual pages walked 2) and len=2/size=2 (reported 2)",
+    "node -e (crafted cursors): offset=-2 -> items [] + nextCursor offset 0 (restarts); offset=99 -> items [] no error; offset=\"1\" and offset=1.5 -> items [2,3] no error; {x:1} missing offset -> items [] no error; garbage cursor -> ShopError InvalidCursor (only case handled)"
+  ],
+  "not_verified": [
+    "Whether any caller outside this diff consumes page() — the diff adds a new module and no other source file in the worktree references it.",
+    "Intended behaviour when items is not an array; the spec does not state it and the diff does not validate it."
+  ],
+  "plan": [],
+  "findings": [
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/pagination.js",
+      "line": 17,
+      "claim": "totalPages is computed as Math.floor(items.length / size) + 1, which over-reports by one whenever items.length is an exact multiple of size.",
+      "evidence": "Spec line 4: \"totalPages = number of pages needed for items.length at size\". Executed: page([1,2,3,4], {size:2}).totalPages === 3, but walking nextCursor yields only 2 pages before nextCursor is null. page([1,2], {size:2}).totalPages === 2 for a single full page. The value also contradicts nextCursor inside the same return object.",
+      "suggested_fix": "totalPages: Math.ceil(items.length / size) — this also yields 0 for an empty list, making the items.length === 0 special case unnecessary.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "high",
+      "kind": "spec",
+      "lens": "spec",
+      "file": "src/pagination.js",
+      "line": 10,
+      "claim": "The decoded cursor offset is never validated, so the spec's InvalidCursor rule is enforced only for undecodable base64/JSON; a well-formed cursor carrying a negative, out-of-range, fractional, string, or missing offset is accepted and silently produces a wrong page.",
+      "evidence": "Spec line 6 requires ShopError(\"InvalidCursor\") for any cursor that does not decode to an integer offset within 0..items.length. The try/catch guards only the decode. Executed against [1,2,3,4,5] with size 2: cursor {offset:-2} returns items [] and nextCursor encoding offset 0, so the caller's next call restarts at [1,2] — an endless page loop instead of an error. Against [1,2,3]: {offset:99} returns items [] with nextCursor null; {offset:\"1\"} and {offset:1.5} both return items [2,3]; {x:1} (offset undefined) returns items [] because slice(undefined, NaN) is empty.",
+      "suggested_fix": "Validate the payload before use: const o = dec(cursor).offset; throw new ShopError(\"InvalidCursor\", ...) unless Number.isInteger(o) && o >= 0 && o <= items.length; only then assign offset.",
+      "verdict": "confirmed",
+      "raised_by": null
+    },
+    {
+      "severity": "medium",
+      "kind": "standards",
+      "lens": "standards",
+      "file": "test/pagination.test.js",
+      "line": 47,
+      "claim": "The tests assert no totalPages value and no cursor-validation behaviour, so both defects above pass the suite; the single error test also does not assert the error type or code.",
+      "evidence": "npm test passes 3/3 with the defects present. The three cases cover first-page items, cursor following on lists whose length is not an exact multiple of size (the arithmetic that happens to be right), and `assert.throws(() => page([], {size: 0}))` with no matcher, which would also pass on an unrelated TypeError.",
+      "suggested_fix": "Add totalPages cases for an exact multiple (page([1,2,3,4], {size:2}).totalPages === 2) and empty input (0); add ShopError code \"InvalidCursor\" cases for offsets -1, items.length + 1, and a non-integer offset; pass a matcher to assert.throws, e.g. assert.throws(fn, (e) => e.code === \"InvalidSize\").",
+      "verdict": "confirmed",
+      "raised_by": null
+    }
+  ],
+  "questions": [],
+  "sources": [],
+  "next_steps": [
+    "Fix totalPages to Math.ceil(items.length / size).",
+    "Add explicit offset validation after cursor decode and throw ShopError(\"InvalidCursor\") for anything outside integer 0..items.length.",
+    "Extend test/pagination.test.js with the totalPages boundary and InvalidCursor cases so the fixes are locked in."
+  ]
+}
