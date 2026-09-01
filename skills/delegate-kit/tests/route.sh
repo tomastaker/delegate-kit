@@ -97,6 +97,10 @@ ok "route verifier без автора — отказ" "$(PATH="$BASE/both" "$NO
 ok "run reviewer без автора и без --backend — отказ" "$(PATH="$BASE/both" "$NODE" "$AR" run --role reviewer --prompt x --parent claude 2>&1 | grep -c 'is required')" "1"
 ok "run reviewer с явным --backend автора не требует" "$(PATH="$BASE/both" "$NODE" "$AR" run --role reviewer --backend claude --model gpt-5.6-sol --prompt x --parent claude 2>&1 | grep -c 'is a codex model')" "1"
 ok "planner автора не требует" "$(route both --role planner --parent claude '.backend')" "claude"
+ok "route reviewer с --backend, но без автора — всё равно отказ" "$(PATH="$BASE/both" "$NODE" "$AR" route --role reviewer --parent claude --backend claude 2>&1 | grep -c 'is required')" "1"
+mkdir -p "$DELEGATE_KIT_HOME/runs/rv-1"; jq -n '{id:"rv-1",role:"reviewer",backend:"codex",model:"gpt-5.6-sol",effort:"high",cwd:"/tmp",write:false,status:"finished",pid:1,started:"2026-01-01T00:00:00Z",finished:"2026-01-01T00:01:00Z",sessionId:"sess-1"}' > "$DELEGATE_KIT_HOME/runs/rv-1/meta.json"
+ok "resume ревьюера без автора не отказывает (семейство из meta)" "$(PATH="$BASE/both" "$NODE" "$AR" resume rv-1 --prompt x --parent claude --no-route-hint 2>&1 | grep -c 'is required')" "0"
+ok "resume ушёл на семейство прогона" "$(PATH="$BASE/both" "$NODE" "$AR" list | jq -r '[.[]|select(.id!="rv-1")][0].backend')" "codex"
 
 echo "── отказы"
 ok "модель чужого семейства на run" "$(PATH="$BASE/both" "$NODE" "$AR" run --role planner --backend claude --model gpt-5.6-sol --prompt x --parent claude 2>&1 | grep -c 'is a codex model but --backend is claude')" "1"

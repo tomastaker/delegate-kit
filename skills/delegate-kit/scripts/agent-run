@@ -616,7 +616,11 @@ function resolveRoute(opts = {}) {
    * названо, а независимость там не считается.
    */
   const authorGiven = opts["author-backend"] && opts["author-backend"] !== true;
-  if (["reviewer", "verifier"].includes(role) && !authorGiven && !(opts.backend && opts.backend !== true) && !opts._composed) {
+  // The exemption is for `run` only (family named, independence not computed there) and for a
+  // resume (the family is the persisted one). `route` always needs the author: it is what
+  // `independent` is computed against.
+  const runWithBackend = opts._run && opts.backend && opts.backend !== true;
+  if (["reviewer", "verifier"].includes(role) && !authorGiven && !runWithBackend && !opts._composed) {
     die(`--author-backend claude|codex|self is required for --role ${role}: who wrote the diff decides the family. A delegated implementer → its family; a diff the coordinator wrote itself → self.`);
   }
   // `self`: the parent wrote the change itself, so the author is the parent's family
@@ -872,7 +876,7 @@ async function cmdRun(opts, resumeOf = null) {
   const role = resumeOf ? resumeOf.role : opts.role;
   if (!role || !ROLES[role]) die(`--role must be one of ${Object.keys(ROLES).join("|")}`);
   const spec = ROLES[role];
-  const route = resolveRoute({ ...opts, role });
+  const route = resolveRoute({ ...opts, role, _run: true, backend: resumeOf ? resumeOf.backend : opts.backend });
   const backend = resumeOf ? resumeOf.backend : route.backend;
   const model = resumeOf ? (opts.model && opts.model !== true ? opts.model : resumeOf.model) : route.model;
   const effort = resumeOf ? (opts.effort && opts.effort !== true ? opts.effort : resumeOf.effort) : route.effort;
