@@ -15,6 +15,18 @@ INPUT=$(cat)
 CMD=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 [ -z "$CMD" ] && exit 0
 
+# Delegation depth is 1. External workers get DELEGATE_KIT_DEPTH from agent-run; a native
+# subagent gets no such variable but its hook input carries agent_type (Claude Code sets
+# agent_id/agent_type on tool events fired inside a subagent). Starting a worker or taking
+# a worktree lock from there is denied outright — no confirmation prefix reopens it, so this
+# check sits before the confirmation bypass below.
+AGENT=$(printf '%s' "$INPUT" | jq -r '.agent_type // empty' 2>/dev/null || true)
+if [ -n "$AGENT" ] && printf '%s' "$CMD" | grep -Eq '(^|[;&|(`[:space:]/"'"'"'])(agent-run["'"'"']?[[:space:]]+(run|resume)|agent-wt["'"'"']?[[:space:]]+lock)([[:space:]]|$)'; then
+  msg="delegate-kit gate: delegation depth is 1 — a worker ($AGENT) does not start workers or take worktree locks. Return what you have; the coordinator dispatches."
+  jq -cn --arg m "$msg" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$m}}'
+  exit 0
+fi
+
 # explicit confirmation prefix (visible in the approval UI / transcript)
 if printf '%s' "$CMD" | grep -Eq '^[[:space:]]*DELEGATE_KIT_CONFIRMED=1[[:space:]]'; then exit 0; fi
 [ "${DELEGATE_KIT_CONFIRMED:-}" = "1" ] && exit 0

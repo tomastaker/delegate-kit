@@ -15,7 +15,7 @@ Serial is a dispatch mode, not a failure: one long-lived worker resumed with eac
 
 Choose external even inside the family when one matters:
 
-- **An enforced sandbox.** External read-only roles run under `claude --permission-mode plan` / `codex -s read-only`. A native role is read-only by instruction and tool list — fine for a reviewer you dispatched yourself, thin as the boundary around an untrusted diff.
+- **An enforced sandbox.** External read-only roles run under `claude --permission-mode plan` / `codex -s read-only`. A native role is read-only by instruction and tool list — fine for a reviewer you dispatched yourself, thin as the boundary around an untrusted diff. What the gate does enforce for a native role: no `agent-run run|resume`, no `agent-wt lock` (`external.md`).
 - **The strict result schema, ledger, run id, timeout, quota fallback.** All live in `agent-run`.
 - **The write-lock for free.** `agent-run --cwd` takes it; a native writer needs `agent-wt lock` before and `agent-wt release` after — the lock is also what the writer cap counts (`external.md`).
 
