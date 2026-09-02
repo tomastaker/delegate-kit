@@ -57,7 +57,7 @@ Worker count equals the number of independent outcomes. Coupled edits stay in on
 
 **2. Build.** Every writer gets a git worktree and a lock. Three writers run at once by default, eight at most. Past three the coordinator states how the work is partitioned and waits for your yes. A worker never starts workers. When a subscription hits its limit mid-run, the writer is retried once on the other family with a note about the commits it already made.
 
-**3. Review.** Any delegated change, any risk zone (auth, payments, migrations, production config), and any diff of the coordinator's own over ~50 lines gets a reviewer. The reviewer is a fresh read-only session with the frozen diff and the spec. It is the other family whenever that CLI is installed. When it is not, a fresh session of the same family runs and the report says `independent: false`. One reviewer is the default. A panel of two or a led review of three is proposed with the diff size and runs on your yes. Findings go back to the implementer that wrote the code, resumed with its context. A dispute is settled by a test or a grep first, by a verifier only after that.
+**3. Review.** Any delegated change, any risk zone (auth, payments, migrations, production config), and any diff of the coordinator's own over ~50 lines gets a reviewer. The reviewer is a fresh read-only session with the frozen diff and the spec. It is the other family whenever that CLI is installed. When it is not, a fresh session of the same family runs and the report says `independent: false`. One reviewer is the default. A panel of two or a led review of three is proposed with the diff size and runs on your yes. Findings go to a fix worker: the implementer resumed while it is still short, otherwise a fresh one with the diff and the findings. The re-review resumes the same reviewer with the diff of the fixes. A dispute is settled by a test or a grep first, by a verifier only after that.
 
 **4. Report.** Every worker returns one JSON object. The coordinator's report is built from it. A check that did not run is listed as not run. A worker's "done" is evidence to inspect, not a verdict.
 
@@ -71,6 +71,7 @@ plan    planner returns 3 steps and 1 blocking question; you answer it
 build   Codex implements in worktree dk/rate-limit, tests pass, commits
 review  Claude reads the diff: 1 high (Retry-After computed from the whole window), 1 low
 fix     the same Codex session fixes both, tests re-run
+re-review  the same Claude reviewer, resumed, confirms both fixes
 report  done · checked: pnpm test, tsc · not checked: load test · reviewed by Claude, single
 ```
 

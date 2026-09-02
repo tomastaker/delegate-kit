@@ -25,14 +25,14 @@ Triage before acting. Pick the first shape that fits; state it in one line.
 | **PARALLEL** | 2+ slices with disjoint write scopes, stable interfaces, each verifiable alone; beyond the cap only as the limits below allow | one implementer per slice, each in its own worktree |
 | **SEQUENTIAL** | a result changes the assumptions of the next task: schema → API → UI, diagnosis → fix | one worker at a time; resumed, it keeps its context |
 
-Worker count equals the number of independent outcomes. Coupled edits stay in one pair of hands: split, they return as merge conflicts and two designs. Limits: writer cap 3, ceiling 8; workers = writers + 3; delegation depth 1. Raising the cap is proposed like a review panel — partition stated, user's yes — and passed as `--max-writers N` (`references/external.md`).
+Worker count equals the number of independent outcomes. Coupled edits stay in one pair of hands: split, they return as merge conflicts and two designs. Limits: writer cap 3, ceiling 8; workers = writers + 3; delegation depth 1. Raising the cap: state the partition, get the user's yes, pass `--max-writers N` (`references/external.md`).
 
-**Routing trap:** "research" that ends in a recommendation is PLAN, not SCOUT. A quote is research; a verdict is planning.
+**Routing trap:** "research" that ends in a recommendation is PLAN, not SCOUT.
 
 ## 2. Spec, tickets and preset
 
 - A grill/interview output or requirements longer than a paragraph → `.scratch/<task>/spec.md`; workers are pointed at it. An interview ends only when the coordinator restates it in 5–8 lines — outcome, who it is for, what success looks like, the binding constraint, **out of scope** — and the user says yes explicitly; "sounds good" is not yes.
-- Multi-slice work gets **tickets**: `/to-tickets` (mattpocock/skills) writes one file per slice to `.scratch/<task>/issues/NN-slug.md` with `Blocked by`, `Status` and acceptance checkboxes. One ticket = one brief. The **frontier** — tickets whose blockers are all done — is the next work; a fresh session continues from the directory alone.
+- Multi-slice work gets **tickets**: `/to-tickets` (mattpocock/skills) writes one file per slice to `.scratch/<task>/issues/NN-slug.md` with `Blocked by`, `Status` and acceptance checkboxes. One ticket = one brief = one worker, never two tickets in one (`references/roles.md`). The **frontier** — tickets whose blockers are all done — is the next work; a fresh session continues from the directory alone.
 - **Never overwrite a plan with unchecked items.** Replanning edits the files in place; different work while a plan is open is a question for the user, not a silent replacement.
 - The user's words set the **preset**: naming who carries the bulk ("main model Claude", "let Codex implement") is `main-claude` / `main-codex`; naming a model for one role ("plan with Fable") is a per-call override. Presets move planner, implementer, researcher; the reviewer follows the author. `references/external.md`.
 
@@ -42,7 +42,7 @@ Once per role: `agent-run route --role <role> [--preset P]`. Keep its answer for
 
 ## 4. Brief
 
-Write every brief from `references/brief-template.md`: goal, spec, acceptance criteria as commands, where to look, constraints, worktree path, what to return. Done when a stranger with only the repository could start. An external worker cannot ask mid-run: its brief says to return `status: blocked` with precise `questions` on ambiguity.
+Write every brief from `references/brief-template.md`. Done when a stranger with only the repository could start.
 
 ## 5. Worktree
 
@@ -50,10 +50,7 @@ Every writer gets one: `agent-wt create <task>`. External writer → `--cwd <wor
 
 ## 6. Review
 
-The author of a non-trivial change does not certify it. A review is **independent** when a fresh read-only worker gets the frozen diff and the spec. Independence, by preference:
-
-1. **the other family** than the author — `route` picks it when that family's CLI is installed;
-2. **a fresh worker of the author's family** — `route`'s answer when the other CLI is missing (`independent: false`). Report which one ran.
+The author of a non-trivial change does not certify it. A review is **independent** when a fresh read-only worker gets the frozen diff and the spec: **the other family** than the author when its CLI is installed, else a fresh worker of the author's family (`route` marks it `independent: false`; report which ran).
 
 Review when: any delegated implementation; a risk zone (auth, payments, migrations, prod config); a coordinator-written diff > ~50 lines; the user asks. Freeze and size it:
 
@@ -62,15 +59,17 @@ agent-wt diff <task> > review.diff
 agent-run route --role reviewer --diff review.diff --author-backend <implementer's family | self>
 ```
 
-`single` runs straight away. `panel` / `led` are **proposed with the printed numbers and run on the user's yes**. Reviewers run in parallel and blind to each other; merge by `references/review.md`.
+`single` runs straight away. `panel` / `led` are **proposed with the printed numbers and run on the user's yes**. Panels merge by `references/review.md`.
 
-**Findings.** Mechanical ones the coordinator fixes. Substantive ones go back to the same implementer (`agent-run resume <id>`, or continue the native subagent). A dispute is settled by a command first — a test, a typecheck, a grep; a **verifier** only for intent, severity or design. A behavior-changing fix re-runs the affected checks and review.
+**Findings.** Mechanical ones the coordinator fixes. Substantive ones go to a **fix worker**: the implementer resumed while under ~100 turns or when a finding rejects its design; else a fresh implementer with the ticket, frozen diff, findings and the previous worker's `summary` and `next_steps` (`references/brief-template.md`). A dispute is settled by a command first — a test, a typecheck, a grep; a **verifier** only for intent, severity or design.
+
+**Re-review.** After a behavior-changing fix, re-run the affected checks and resume the **same reviewer** with the diff of the fixes and each finding's disposition — fixed, or refuted with the reason; it confirms or rejects and reads the new hunks. Unresumable → a fresh reviewer, briefed per the template.
 
 ## 7. Integrate and report
 
 Merge or open a PR per repo conventions; `agent-wt release <task>`, `agent-wt remove <task>`. Report: done, checked, not checked, open questions, which preset ran, which family reviewed at which depth. A check that did not run is reported as not run; a worker's "done" is evidence to inspect.
 
-A ticket's brief: once the coordinator itself has run the acceptance commands, tick its checkboxes and set `Status: done`. The report ends with the frontier — `closed X of Y, next: <ticket>` — so tickets and answer never disagree.
+Once the coordinator itself has run a ticket's acceptance commands, tick its checkboxes and set `Status: done`. The report ends with the frontier — `closed X of Y, next: <ticket>` — so tickets and answer never disagree.
 
 ## 8. Handoff
 

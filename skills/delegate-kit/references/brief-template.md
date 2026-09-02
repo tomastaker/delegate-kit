@@ -44,6 +44,10 @@ The delegate-kit result JSON. If anything is ambiguous, return `status: blocked`
 
 **reviewer on a panel** (add to the above): "Your lens is `<spec | correctness | standards>` — its definition is in `references/review.md`; for `standards`, the smell baseline there applies under the repo's own rules. The lens is your priority, not your boundary: report a high-severity problem outside it too. Concentrate on `<files the lead or route assigned>`; skip `<generated, lockfiles, vendored>`. Set `lens` on every finding. You are one of `<n>` reviewers; you do not see the others' findings." Externally the lens also goes on the command: `--lens <lens> --panel <id>`.
 
+**fix worker** (a fresh implementer after review): "Ticket at `<path>`; frozen diff at `<path>`; findings at `<path>`. The previous worker reported: `<its summary and next_steps>`. Change only what the findings name; run the checks the ticket names; return the same result JSON."
+
+**re-review** (the same reviewer, resumed): "Findings 1 and 3 are fixed — diff of the fixes at `<path>`. Finding 2 is refuted: `<reason>`. Confirm or reject each, review the new hunks; the rest of the diff stands as reviewed." A fresh reviewer, when resume is impossible, gets the same text plus the original findings and the full diff.
+
 **review-lead**, call 1: "Spec at `<path>`. Diff stat: `<agent-run route --role reviewer --diff output>`. Depth: `led`. Return `plan`: one step per reviewer with lens, files to concentrate on, exclusions, and the brief text." Call 2: "Reviewer results: `<result.json paths or pasted JSON, labelled A/B/C>`. Return one merged `findings` list with `raised_by`; disputes as `verdict: needs-human`."
 
 **verifier**: "Finding: <text>. Counter-argument: <text>. Return `findings[0].verdict` as `confirmed`, `refuted` or `needs-human` with evidence."
