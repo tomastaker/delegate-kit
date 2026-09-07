@@ -1,8 +1,7 @@
 ---
 name: dk-implementer
-description: delegate-kit IMPLEMENTER — implements exactly one vertical slice inside the git worktree named in its dispatch, runs the acceptance checks, commits on that branch. Dispatch natively from a Claude Code parent when the implementation should run on the Claude family; for a GPT implementer use `agent-run run --role implementer --backend codex`.
-model: opus
-effort: high
+description: Implementation of one scoped task in an isolated worktree, with acceptance checks.
+model: inherit
 tools: Read, Glob, Grep, Bash, Edit, Write, NotebookEdit
 ---
 

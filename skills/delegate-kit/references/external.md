@@ -1,65 +1,36 @@
-# External workers: the other family, through `agent-run`
+# External workers
 
-A coordinator can spawn only its own family natively. A worker from the other family is a **headless CLI session** — `claude -p` or `codex exec` — started by `scripts/agent-run`. It is launched once with a complete brief, runs to a terminal state, and returns one JSON result. Nothing steers it mid-run; a follow-up is `agent-run resume <id>`. That is the whole difference from a native worker, and every rule below follows from it.
+An external worker is a CLI process launched once from a complete brief. It may belong to the same family as the coordinator. Native versus external describes transport, not model lineage.
 
-| Worker family | coordinator = Claude Code / T3 | coordinator = Codex |
-|---|---|---|
-| Claude (`fable`, `opus`, `sonnet`, `haiku`) | native | **external** — `agent-run run --backend claude` |
-| GPT (`gpt-5.6-sol`, `-terra`, `-luna`) | **external** — `agent-run run --backend codex` | native |
-
-`agent-run route --role <role>` resolves family and dispatch in one call and prints the exact invocation. `run` without `route` works too; it warns when the worker could have been native.
-
-## Preflight
-
-Before the first external call of a task, confirm the CLI is there: `command -v codex` / `command -v claude`. `route` does this itself: when the other family's CLI is missing, a reviewer or verifier comes back as a fresh **native** worker with `independent: false` and a note — the review still happens, on the author's family, and the report says so. Any other role in that state needs the CLI installed or `--backend` on the coordinator's own family.
-
-## Starting and collecting
+Read the relevant adapter in `providers.md` before first use. Confirm the CLI and configured model are available; `doctor` only detects executable presence. Model names, authentication and reasoning capabilities come from the host/provider. Do not read credential values into prompts or reports.
 
 ```
-agent-run run --role <role> --backend <family> [--cwd <worktree>] --brief brief.md [--detach] [--timeout MIN] [--on-finish CMD]
-agent-run wait <id> | status <id> | list | log <id> [out|err|prompt] | kill <id> | resume <id> --brief next.md
+agent-run run --role implementer --backend codex --cwd ../repo.worktrees/task --brief brief.md --detach
+agent-run status RUN_ID
+agent-run wait RUN_ID
+agent-run resume RUN_ID --brief fixes.md
 ```
 
-- **One worker, nothing else to do** → `run` blocks and prints the result.
-- **Several staggered workers, or a coordinator that must stay responsive** → `--detach`, then either `wait <id>` or `--on-finish CMD`. The hook fires exactly once per run on any terminal state, with the result on stdin and `DK_RUN_ID`, `DK_STATUS`, `DK_RESULT_PATH` in the environment; a non-zero exit is retried, delivery survives a dead supervisor. Point it where the coordinator will actually look — a log it tails, a desktop notifier. Without a hook, an external worker is invisible until polled.
-- **Run states.** `status` is how a run ended; `lifecycle` is whether `resume` can still revive it (`parked`) or not (`done`). `orphaned` (supervisor died) and `timeout` are terminal but the worker has usually committed before dying — `agent-run inspect <worktree>` shows what it left before you rerun.
-- **Timeouts are a fuse.** Writers and planners 90 min, reviewers and researchers 45; `--timeout` raises one run. Set it up front for a brief you expect to be long.
+The route returns external arguments as an array. Pass them as arguments; do not interpolate untrusted model identifiers into shell strings.
 
-### Under a Codex coordinator
+A blocking shell call may yield a live process ID before completion. Continue collecting that process; do not repeat run, which starts another worker. With nothing independent to do, use blocking run; with ongoing coordinator work, use --detach and status or an authorized --on-finish command. Delivery hooks are external actions and need the user's applicable authorization.
 
-Codex's shell tool yields after `yield_time_ms` (default 1 s) and returns `Process running with session ID N` — the process is alive, the output is simply not there yet. A blocking `agent-run run` or `wait` therefore needs `yield_time_ms: 300000` on every call, and an early return is reaped by session id, never retried with a fresh `run` (each retry starts one more worker). `--detach` + `status` polling sidesteps the issue.
+## Results and lifecycle
 
-## Presets: which subscription pays
+The adapter extracts the final object and validates the canonical schema, including nested findings. Missing/malformed output fails even if the CLI exits zero. The report retains requested model, source of selection, actual model when available, session ID and check results. CLI configuration may be mutable; an unconfirmed model is never presented as verified.
 
-Quota is not symmetric over time. A preset moves the token-heavy roles — planner, implementer, researcher — onto one family:
+Resume uses the saved adapter, family, model and effort. It never changes model automatically or resumes an unrelated latest session. If the CLI did not provide a session ID, start a fresh worker with the prior summary, worktree state and findings. A CLI-default model remains dependent on CLI configuration across resume; pin a known model for reproducibility.
 
-| Preset | planner | implementer | researcher | reviewer / verifier |
-|---|---|---|---|---|
-| `auto` (default) | claude | codex | claude | derived from the author |
-| `main-claude` | claude | claude | claude | derived from the author |
-| `main-codex` | codex | codex | codex | derived from the author |
+Timeout/orphaned workers may leave commits or uncommitted files. Run `agent-run inspect WORKTREE` before a replacement. Quota failures do not trigger hidden retries on another provider. Choose an authorized replacement explicitly and include the prior state.
 
-The reviewer follows the **author**, never the preset: `main-claude` implies a Codex reviewer, `main-codex` a Claude one. A review is one read-only pass over a frozen diff, a fraction of what the implementer spends, so the preset still moves the bulk of the cost. Under `auto`, `--kind ui` sends the implementation to Claude and the reviewer follows.
+## Isolation and limits
 
-Precedence: the words in the request (`main-claude`, `main-codex`; aliases `main-gpt`/`main-openai`, `main-anthropic`) → `--preset` per call → `DELEGATE_KIT_PRESET` → `agent-run preset <P>` persisted in `~/.delegate-kit/config.json` → `auto`. Explicit `--backend` / `--model` / `--effort` win over the preset, and the user can name a model for one role ("review with Sol").
+Every writer has one worktree and one lock. `agent-run --cwd` locks it automatically and refuses a native writer's lock. Native dispatch requires `agent-wt lock`. Writers commit only their own files; integration and push belong to the coordinator.
 
-Per-role defaults for one user, in the same file — the shipped table in `scripts/agent-run` stays the default for everyone:
+Read-only capability depends on the adapter. Some omit shell tools completely; the coordinator performs acceptance commands in its own authorized environment. See providers.md for the exact boundary. A worktree is write coordination, not a security sandbox.
 
-```json
-{ "preset": "main-claude",
-  "roles": { "planner": { "claude": ["fable", "xhigh"] }, "reviewer": { "codex": ["gpt-5.6-sol", "xhigh"] } } }
-```
+Default cap: 3 writers, maximum 8, total workers = writers + 3. More writers need a user-approved ownership partition. The run counts external writers machine-wide plus native locks in its repository. Concurrent starts reserve slots under a mutex; a refusal before or during detached startup is reported.
 
-`agent-run preset` alone prints the effective table. A malformed entry is reported and ignored.
+Delegation depth is 1. Native definitions carry no delegation tool; external adapters disable it through host controls where available, and the brief forbids further delegation. Worker shell subprocesses carry DELEGATE_KIT_DEPTH, so nested agent-run calls fail.
 
-## Limits and safety
-
-- **Delegation depth is 1.** `agent-run` disables subagents on both CLIs; the shipped `dk-*` definitions carry no `Agent` tool; and `hooks/gate.sh` denies `agent-run run|resume` and `agent-wt lock` from inside a Claude Code subagent, which it recognises by the `agent_type` field of the hook input. Under a Codex parent the native roles hold that line by their instructions only.
-- **Writer cap 3, ceiling 8; workers = writers + 3**, so a `panel` or `led` review fits beside a full set of writers. `agent-run run` counts external writers machine-wide plus the native locks (`agent-wt lock`) of the repository it writes into; `agent-wt lock` counts the locked worktrees of its repository. The cap is raised per task: the coordinator states the **partition** — one ticket per writer, disjoint write scopes — the user says yes, and `--max-writers N` on the run or the lock carries it (`DELEGATE_KIT_MAX_WRITERS` for the session; `DELEGATE_KIT_MAX_WORKERS` overrides the total, floored at writers + 1). The ceiling holds against every override; past it the work goes in waves. A run refused by a cap or a locked worktree fails before anything is spawned, `--detach` included: the parent prints the reason. A refusal that lands inside the supervisor (a race) is recorded as `failed`, so `status` shows it. Counting and taking a slot happen under one mutex, so concurrent starts respect the cap too. N sessions on one subscription hit the rate limit together; `--fallback none` keeps a fleet from all retrying on the other family at once.
-- **Writers** run in a worktree under the backend's own sandbox (`workspace-write` / `acceptEdits`); the dangerous modes are outside this skill. `agent-run` refuses a worktree locked for a native writer, and the reverse.
-- **Read-only roles** run under `codex -s read-only` / `claude --permission-mode plan` — the enforced boundary a native role lacks. When it matters (an untrusted diff, a risk zone), dispatch that role externally even inside the family.
-- **Quota fallback.** On a usage or rate limit `agent-run` retries the brief once on the other family and marks the result `fallback_from`. A writer's rerun gets a `PREVIOUS ATTEMPT` note at the top of the brief — commits since base and uncommitted files the first worker left (`agent-run inspect` prints the same) — so it continues instead of starting blind; `ultra` becomes `xhigh` when the rerun lands on Claude. For a reviewer that can land the review on the author's family — the result says so; report it or re-run later. `--fallback none` disables it; resumes never fall back.
-- `hooks/gate.sh` makes dangerous shell commands need the user's confirmation in the coordinator (Claude: the approval prompt; Codex: denied with instructions to confirm and re-run prefixed `DELEGATE_KIT_CONFIRMED=1`).
-- The ledger `~/.delegate-kit/ledger.jsonl` records model, effort, preset, lens, tokens, duration and outcome per external run. Read it before changing a default.
-
-A Claude coordinator under `main-claude` runs everything natively and pays for exactly one external session — the Codex reviewer. That is the cheapest shape this skill has.
+Run metadata and ledger live under ~/.delegate-kit, overridable with DELEGATE_KIT_HOME. Native runs are not automatically in this ledger; record their actual dispatch in the coordinator's report. Do not treat an external-only ledger as a complete cost comparison.

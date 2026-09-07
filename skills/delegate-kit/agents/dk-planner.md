@@ -1,8 +1,7 @@
 ---
 name: dk-planner
-description: delegate-kit PLANNER — read-only decomposition of a task into an ordered plan with files, risks, blocking questions and acceptance checks. Dispatch natively from a Claude Code parent when the plan should run on the Claude family; for a GPT planner use `agent-run run --role planner --backend codex`.
-model: fable
-effort: high
+description: Read-only planning of ordered steps, ownership, risks and acceptance checks.
+model: inherit
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
 ---
 

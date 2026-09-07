@@ -8,6 +8,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { roles as ROLES, resolve, readConfig, backendTable, installed } from "./routing.mjs";
+import { buildCommand, extractResult } from "./adapters.mjs";
+import { inspectPermissions, mergeInline } from "./opencode-permissions.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(HERE, "..");
@@ -40,19 +43,6 @@ const WRITERS_DEFAULT = 3;
 const WRITERS_CEILING = 8;
 const WORKERS_HEADROOM = 3;
 
-// ---------- role matrix (defaults; override with --preset/--backend/--model/--effort) ----------
-// Model and effort per role, per model family. `--backend` picks the family; which family
-// a role lands in is decided by the preset below, not baked into the role.
-// The Codex CLI exposes gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna (see ~/.codex/models_cache.json);
-// there is no `pro` worker, so the strongest Codex role is sol at xhigh.
-const ROLES = {
-  planner:     { write: false, claude: ["fable", "high"],     codex: ["gpt-5.6-sol", "xhigh"] },
-  implementer: { write: true,  claude: ["opus", "high"],      codex: ["gpt-5.6-sol", "high"] },
-  reviewer:    { write: false, claude: ["opus", "high"],      codex: ["gpt-5.6-sol", "high"] },
-  verifier:    { write: false, claude: ["fable", "high"],     codex: ["gpt-5.6-sol", "xhigh"] },
-  researcher:  { write: false, claude: ["sonnet", "medium"],  codex: ["gpt-5.6-terra", "medium"] },
-  "review-lead": { write: false, claude: ["fable", "high"],   codex: ["gpt-5.6-sol", "xhigh"] },
-};
 /*
  * Потолок времени на прогон, по ролям.
  *
@@ -77,23 +67,8 @@ const ROLE_TIMEOUT_MIN = {
   "review-lead": 45,
 };
 
-// Per-user overrides live in ~/.delegate-kit/config.json under "roles":
-//   { "roles": { "planner": { "claude": ["opus", "high"] }, "reviewer": { "codex": ["gpt-5.6-sol", "xhigh"] } } }
-// The shipped table above is the default for everyone; the config is how one user changes it
-// without editing this file. Applied before any routing.
 const CONFIG_FILE = path.join(STATE_DIR, "config.json");
-(function applyRoleOverrides() {
-  let cfg; try { cfg = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")); } catch { return; }
-  const roles = cfg && cfg.roles; if (!roles || typeof roles !== "object") return;
-  for (const [role, fam] of Object.entries(roles)) {
-    if (!ROLES[role]) { process.stderr.write(`agent-run: config.json roles.${role} ignored — unknown role\n`); continue; }
-    for (const backend of ["claude", "codex"]) {
-      const v = fam && fam[backend]; if (v === undefined) continue;
-      if (!Array.isArray(v) || v.length !== 2 || typeof v[0] !== "string" || typeof v[1] !== "string") { process.stderr.write(`agent-run: config.json roles.${role}.${backend} ignored — expected ["model", "effort"]\n`); continue; }
-      ROLES[role][backend] = [v[0], v[1]];
-    }
-  }
-})();
+const config = () => readConfig(CONFIG_FILE);
 const ROLE_PREAMBLE = {
   planner: "You are a read-only PLANNER. Do not modify files. Produce an ordered plan with files per step, risks, blocking vs non-blocking questions, and the checks that prove completion.",
   implementer: "You are the IMPLEMENTER for exactly this task. Work only inside the current directory (a dedicated git worktree). Run the acceptance checks you can. Commit your work on the current branch with a clear message. If something is ambiguous, stop and return status=blocked with precise questions instead of guessing.",
@@ -178,7 +153,7 @@ function reconcile(m) {
   return m;
 }
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
-const cliAvailable = (backend) => sh("/bin/sh", ["-c", `command -v ${backend === "codex" ? "codex" : "claude"}`]).status === 0;
+
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -296,8 +271,8 @@ function resolveCaps(opts = {}) {
  * сообщения координатора все проходят чтение до первой записи и все стартуют
  * (Codex-ревью PR #4 воспроизвёл это на agent-wt: восемь lock'ов при cap 1).
  * Файл с флагом wx атомарен на любой POSIX-ФС; труп опознаётся по мёртвому
- * pid. Держится от проверки до появления meta.json — для отсоединённого
- * прогона его пишет супервизор, поэтому родитель ждёт файл, не отпуская.
+ * pid. Each supervisor holds its own mutex from admission checks until meta.json
+ * is written. A detach parent releases its preliminary lock before spawning it.
  */
 const CAPS_MUTEX = path.join(STATE_DIR, "caps.lock");
 let capsMutexHeld = false;
@@ -581,161 +556,26 @@ function cmdNotify(argv) {
   process.stdout.write(JSON.stringify(rows, null, 2) + "\n");
 }
 
-const QUOTA_RE = /usage limit|rate limit|limit reached|out of (extra )?usage|quota|too many requests|overloaded|429/i;
-const isQuotaError = (m, stderr) => {
-  const txt = [m?.result?.summary, stderr].filter(Boolean).join("\n");
-  return (m?.status === "failed" || m?.workerStatus === "failed") && QUOTA_RE.test(txt);
-};
-const otherBackend = (b) => (b === "claude" ? "codex" : "claude");
-
-// ---------- presets and routing (single source of truth for who runs what, where) ----------
-// A preset says which family absorbs the token-heavy work. It moves planner, implementer and
-// researcher only: reviewer and verifier stay derived from the author's family, because
-// independence is the reason they exist and is not a quota knob.
-const PRESETS = {
-  "auto":        { planner: "claude", implementer: "codex",  researcher: "claude" },
-  "main-claude": { planner: "claude", implementer: "claude", researcher: "claude" },
-  "main-codex":  { planner: "codex",  implementer: "codex",  researcher: "codex" },
-};
-const PRESET_ALIASES = { default: "auto", none: "auto", claude: "main-claude", anthropic: "main-claude", "main-anthropic": "main-claude", codex: "main-codex", gpt: "main-codex", openai: "main-codex", "main-gpt": "main-codex", "main-openai": "main-codex" };
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-const validEffort = (backend, e) => EFFORTS.includes(e) || (backend === "codex" && e === "ultra");
-
-function normalizePreset(v, where) {
-  if (v === undefined || v === null || v === "" || v === true) return null;
-  const k = String(v).trim().toLowerCase();
-  const p = PRESETS[k] ? k : PRESET_ALIASES[k];
-  if (!p) die(`unknown preset "${v}"${where ? ` (from ${where})` : ""}; use ${Object.keys(PRESETS).join(" | ")}`);
-  return p;
-}
-function currentPreset(opts = {}) {
-  return normalizePreset(opts.preset, "--preset")
-    ?? normalizePreset(process.env.DELEGATE_KIT_PRESET, "DELEGATE_KIT_PRESET")
-    ?? normalizePreset((readJson(CONFIG_FILE, {}) || {}).preset, CONFIG_FILE)
-    ?? "auto";
-}
-// Which harness is the orchestrator. Native dispatch is only possible inside its own family.
-function detectParent(opts = {}) {
-  const explicit = opts.parent || process.env.DELEGATE_KIT_PARENT;
-  if (explicit && explicit !== true) {
-    const p = String(explicit).toLowerCase();
-    if (!["claude", "codex"].includes(p)) die(`--parent must be claude or codex (got ${explicit})`);
-    return p;
-  }
-  if (process.env.CLAUDECODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "claude";
-  if (process.env.CODEX_SANDBOX || process.env.CODEX_NON_INTERACTIVE || process.env.CODEX_HOME) return "codex";
-  return null;
-}
-
 function resolveRoute(opts = {}) {
-  const role = opts.role;
-  if (!role || !ROLES[role]) die(`--role must be one of ${Object.keys(ROLES).join("|")}`);
-  const preset = currentPreset(opts);
-  const parent = detectParent(opts);
-  const table = PRESETS[preset];
-  const why = [];
-  const uiKind = String(opts.kind || "").toLowerCase() === "ui";
-  // Who wrote the code decides the reviewer. Default to whoever this preset would have
-  // implemented with — including the UI exception, or the reviewer flips to the wrong family.
-  const defaultAuthor = preset === "auto" && uiKind ? "claude" : table.implementer;
-  /*
-   * Для reviewer и verifier автор — обязательный флаг. Раньше он молча
-   * подставлялся из implementer'а пресета, и diff, написанный самим
-   * координатором на Claude под auto, получал автора codex, ревьюера claude и
-   * пометку independent: true — ревью того же семейства выдавалось за
-   * независимое. Явный --backend на run автора не требует: семейство уже
-   * названо, а независимость там не считается.
-   */
-  const authorGiven = opts["author-backend"] && opts["author-backend"] !== true;
-  // The exemption is for `run` only (family named, independence not computed there) and for a
-  // resume (the family is the persisted one). `route` always needs the author: it is what
-  // `independent` is computed against.
-  const runWithBackend = opts._run && opts.backend && opts.backend !== true;
-  if (["reviewer", "verifier"].includes(role) && !authorGiven && !runWithBackend && !opts._composed) {
-    die(`--author-backend claude|codex|self is required for --role ${role}: who wrote the diff decides the family. A delegated implementer → its family; a diff the coordinator wrote itself → self.`);
-  }
-  // `self`: the parent wrote the change itself, so the author is the parent's family
-  let author = authorGiven ? String(opts["author-backend"]) : defaultAuthor;
-  if (author === "self") { if (!parent) die("--author-backend self needs a detectable parent (or --parent)"); author = parent; }
-  if (!["claude", "codex"].includes(author)) die("--author-backend must be claude, codex or self");
-
-  let backend;
-  if (role === "reviewer") {
-    backend = otherBackend(author);
-    why.push(`reviewer runs on the other family than the author (${author}) — independence is the point`);
-  } else if (role === "verifier") {
-    backend = author; // third party to the reviewer, which is already the author's opposite
-    why.push(`verifier is a third party to the reviewer (${otherBackend(author)}), so it lands back on ${backend}`);
-  } else {
-    // the review lead is judgement, not review: it follows the planner's family (strongest per preset)
-    backend = table[role === "review-lead" ? "planner" : role];
-    why.push(`preset ${preset} routes ${role} to ${backend}`);
-    if (preset === "auto" && role === "implementer" && uiKind) {
-      backend = "claude";
-      why.push("UI/design-heavy implementation goes to Claude under the auto preset");
-    }
-  }
-  if (opts.backend && opts.backend !== true) {
-    if (!["claude", "codex"].includes(opts.backend)) die("--backend must be claude or codex");
-    if (opts.backend !== backend) why.push(`--backend ${opts.backend} overrides the routed family`);
-    backend = opts.backend;
-  }
-
-  const write = ROLES[role].write;
-  let dispatch = parent && parent === backend ? "native" : "external";
-  // Independence prefers the other family, but is not gated on it: when that family's CLI
-  // is not installed, the reviewer/verifier lands on the parent's own family as a fresh,
-  // read-only native worker, and `independence` records which one the caller got.
-  let independence = ["reviewer", "verifier"].includes(role) ? (backend === author ? "same-family" : "other-family") : undefined;
-  let fellBack = false;
-  if (dispatch === "external" && !cliAvailable(backend)) {
-    const userPinned = opts.backend && opts.backend !== true && !opts._composed;
-    if (parent && ["reviewer", "verifier"].includes(role) && !userPinned) {
-      why.push(`the ${backend} CLI is not installed, so the ${role} falls back to a fresh native ${parent} worker — say so in the report`);
-      backend = parent; dispatch = "native"; fellBack = true;
-      independence = backend === author ? "same-family" : "other-family";
-    } else {
-      why.push(`the ${backend} CLI is not installed; install it or pass --backend ${otherBackend(backend)}`);
-    }
-  }
-  if (dispatch === "native") {
-    if (!fellBack) why.push(`the parent (${parent}) is in the same family, so it can spawn this worker natively`);
-  } else {
-    why.push(parent
-      ? `the parent (${parent}) cannot spawn a ${backend} worker natively, so it goes through agent-run`
-      : "no parent harness detected (pass --parent), so external dispatch is assumed");
-  }
-
-  const [defModel, defEffort] = ROLES[role][backend];
-  const model = opts.model && opts.model !== true ? opts.model : defModel;
-  const effort = opts.effort && opts.effort !== true ? opts.effort : defEffort;
-
-  const external = ["agent-run run", `--role ${role}`, `--backend ${backend}`, `--model ${model}`, `--effort ${effort}`,
-    write ? "--cwd <worktree>" : "", "--brief <brief.md>"].filter(Boolean).join(" ");
-  const invoke = dispatch === "external"
-    ? { how: "external", command: external,
-        note: write ? "create the worktree with `agent-wt create <name>` first; agent-run takes the write-lock itself" : "runs read-only in the current working tree" }
-    : parent === "claude"
-      ? { how: "native", harness: "claude-code", tool: "Agent", subagent_type: `dk-${role}`, model,
-          note: write
-            ? "take the lock yourself: `agent-wt create <name>` then `agent-wt lock <name> --label dk-implementer`, name the worktree path in the prompt, and `agent-wt release <name>` when the subagent returns"
-            : "effort comes from the agent definition, not from the call; install the definitions with hooks/install.sh" }
-      : { how: "native", harness: "codex", tool: "spawn_agent", agent: `dk-${role}`, model, reasoning_effort: effort,
-          note: write
-            ? "take the lock yourself: `agent-wt create <name>` then `agent-wt lock <name> --label dk-implementer`, name the worktree path in the prompt, and `agent-wt release <name>` when the subagent returns"
-            : "role definition lives in ~/.codex/config.toml under [agents.dk-*]; install it with hooks/install.sh" };
-
-  return { role, preset, parent: parent ?? "unknown", author, backend, model, effort, write, dispatch, independence, invoke, why,
-    prefer_external_when: dispatch === "native" ? [
-      "you need the strict JSON result contract, a ledger entry or a resumable run id",
-      "you need a hard timeout, a detached parallel writer, or automatic cross-vendor quota fallback",
-      "you need an enforced read-only sandbox — a native read-only role is read-only by instruction and tool list, not by sandbox",
-    ] : undefined };
+  const route = resolve(opts, config());
+  const invocation = ["agent-run", "run", "--role", route.role, "--backend", route.backend,
+    "--families", route.allowed_backends.join(","), "--mode", route.mode];
+  if (route.parent) invocation.push("--parent", route.parent);
+  if (route.model) invocation.push("--model", route.model);
+  if (route.effort) invocation.push("--effort", route.effort);
+  if (route.author) invocation.push("--author-backend", route.author);
+  invocation.push("--brief", "<brief.md>");
+  if (route.write) invocation.push("--cwd", "<worktree>");
+  const native = { how: "native", harness: route.adapter,
+    role: `dk-${route.role}`, ...(route.model ? { model: route.model } : {}),
+    ...(route.effort ? { reasoning_effort: route.effort } : {}),
+    note: "Use the host's actual dispatch schema. Omit model/effort for inheritance. Fresh reviewer context; writer worktree lock required." };
+  if (route.adapter === "codex") Object.assign(native, { tool: "spawn_agent", agent_type: `dk-${route.role}` });
+  if (route.adapter === "claude") Object.assign(native, { tool: "Agent", subagent_type: `dk-${route.role}` });
+  return { ...route, invoke: route.dispatch === "native" ? native : { how: "external", argv: invocation,
+    note: "Arguments are an array, not shell text. Inspect CLI model configuration when model_source is cli-default." } };
 }
 
-// ---------- review depth ----------
-// How many reviewers a diff deserves, decided from the frozen diff and not from a feeling.
-// Thresholds are a starting point; tune them from the ledger (lens + panel per run).
 const DEPTHS = ["single", "panel", "led"];
 const DEPTH_RULES = {
   panel: { lines: 400, files: 10, modules: 2 },  // at or above any of these, or any risk zone
@@ -773,20 +613,6 @@ function suggestDepth(stats, kind) {
   return { depth: "single", because: `${stats.lines} lines, ${stats.files} files, ${mods} module(s), no risk zone` };
 }
 
-// Slot A is always the other family than the author: that is where independence comes from and
-// nothing moves it. Slot B may sit on the author's family — independence is already paid for, and
-// the second slot buys a second lens, not a second opinion from the same angle. Slot C alternates.
-// Slot A is the other family than the author unless the user pins it with --backend: an
-// explicit same-family reviewer is the user's call, reported as independent: false. Before
-// it was honoured, `route --role reviewer --backend X` was silently overridden here.
-function reviewComposition(depth, author, kind, pinned = null) {
-  const first = pinned || otherBackend(author);
-  const lenses = kind === "refactor" ? ["correctness", "standards", "spec"] : ["correctness", "spec", "standards"];
-  const n = depth === "single" ? 1 : depth === "panel" ? 2 : 3;
-  const families = [first, otherBackend(first), first];
-  return lenses.slice(0, n).map((lens, i) => ({ slot: "ABC"[i], lens, backend: families[i], independent: families[i] !== author, pinned: Boolean(pinned) && i === 0 }));
-}
-
 function cmdRoute(argv) {
   const base = resolveRoute(argv);
   if (argv.role !== "reviewer" && !argv.depth && !argv.diff) return process.stdout.write(JSON.stringify(base, null, 2) + "\n");
@@ -797,108 +623,46 @@ function cmdRoute(argv) {
   let depth = argv.depth && argv.depth !== true ? String(argv.depth) : (suggested ? suggested.depth : "single");
   if (!DEPTHS.includes(depth)) die(`--depth must be ${DEPTHS.join("|")} (got ${depth})`);
   const author = base.author;
-  const reviewers = reviewComposition(depth, author, kind, argv.backend && argv.backend !== true ? String(argv.backend) : null).map((r) => {
-    // a slot the user pinned with --backend keeps it even when that CLI is missing; composed slots may fall back
-    const rr = resolveRoute({ ...argv, role: "reviewer", backend: r.backend, _composed: !r.pinned, depth: undefined, diff: undefined });
-    // keep what the caller must act on: a fallback that happened, or a pinned CLI that is missing
-    const note = rr.why.find((w) => w.includes("falls back") || w.includes("not installed"));
-    const { pinned: _p, ...slot } = r;
-    return { ...slot, backend: rr.backend, independent: rr.backend !== author, model: rr.model, effort: rr.effort, dispatch: rr.dispatch, invoke: rr.invoke, ...(note ? { note } : {}) };
+  const cfg = config();
+  const table = backendTable(cfg);
+  const lenses = kind === "refactor" ? ["correctness", "standards", "spec"] : ["correctness", "spec", "standards"];
+  const count = depth === "single" ? 1 : depth === "panel" ? 2 : 3;
+  const alternate = base.allowed_backends.find(b => table[b].family !== base.family && (b === base.parent || installed(table[b].adapter)));
+  const reviewers = lenses.slice(0, count).map((lens, i) => {
+    // A hard reviewer assignment applies to every slot. Soft preferences do not prevent diversity.
+    const backend = i % 2 && !cfg.roles?.reviewer?.backend && !argv.backend ? alternate || base.backend : base.backend;
+    const rr = resolveRoute({ ...argv, role: "reviewer", backend, model: i && backend !== base.backend ? undefined : argv.model,
+      effort: i && backend !== base.backend ? undefined : argv.effort, depth: undefined, diff: undefined });
+    return { slot: "ABC"[i], lens, ...rr };
   });
-  const lead = depth === "led" ? (() => { const l = resolveRoute({ ...argv, role: "review-lead", backend: undefined, depth: undefined, diff: undefined }); return { backend: l.backend, model: l.model, effort: l.effort, dispatch: l.dispatch, invoke: l.invoke }; })() : null;
+  const lead = depth === "led" ? (() => { const l = resolveRoute({ ...argv, role: "review-lead", backend: undefined, model: undefined, effort: undefined, depth: undefined, diff: undefined }); return { backend: l.backend, model: l.model, effort: l.effort, dispatch: l.dispatch, invoke: l.invoke }; })() : null;
   const sessions = reviewers.length + (lead ? 2 : 0);
-  const out = { role: "reviewer", preset: base.preset, parent: base.parent, author, depth,
+  const out = { role: "reviewer", preset: base.preset, mode: base.mode, parent: base.parent, author, depth,
     suggested: suggested ? { depth: suggested.depth, because: suggested.because, overridden: suggested.depth !== depth } : null,
     diff: stats, reviewers, lead, cost_note: `${sessions} read-only session(s): ${reviewers.length} reviewer(s)${lead ? " + lead before and after" : ""}; verifier extra per dispute`,
     merge_rules: depth === "single" ? undefined : [
       "reviewers run in parallel and blind to each other; the merge is a separate step",
-      "same finding from two reviewers: higher confidence, no verifier needed",
+      "same finding from two reviewers: merge evidence; agreement alone does not prove correctness",
       "finding from one, silence from the other: coverage, not a dispute",
       "one says high, the other explicitly says fine: dispute — settle by command first, then verifier",
       "dedupe by meaning, not by file:line",
     ],
-    ask_user: depth !== "single" && !(argv.depth && argv.depth !== true) ? "a panel is more than one session — propose it with the numbers above and wait for the user's yes" : undefined,
+    ask_user: depth !== "single" && !(argv.depth && argv.depth !== true) && cfg.review?.allow_multiple !== true ? "a panel is more than one session — propose it with the numbers above and wait for the user's yes" : undefined,
   };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
 function cmdPreset(argv) {
-  const v = argv._[1];
-  if (!v) {
-    const cfg = readJson(CONFIG_FILE, {}) || {};
-    return console.log(JSON.stringify({ preset: currentPreset({}), available: Object.keys(PRESETS),
-      from: { flag: null, env: process.env.DELEGATE_KIT_PRESET ?? null, config: cfg.preset ?? null, file: CONFIG_FILE },
-      routes: PRESETS[currentPreset({})],
-      roles: Object.fromEntries(Object.entries(ROLES).map(([r, v]) => [r, { claude: v.claude.join(" "), codex: v.codex.join(" ") }])),
-      role_overrides: cfg.roles ?? null }, null, 2));
-  }
-  const p = normalizePreset(v, "argument");
-  const cfg = readJson(CONFIG_FILE, {}) || {};
-  cfg.preset = p; writeJson(CONFIG_FILE, cfg);
-  console.log(JSON.stringify({ preset: p, routes: PRESETS[p], saved_to: CONFIG_FILE }, null, 2));
+  const cfg = config();
+  const preset = argv._[1];
+  if (!preset) return console.log(JSON.stringify({ config: cfg, backends: backendTable(cfg), file: CONFIG_FILE }, null, 2));
+  if (!["auto", "main-claude", "main-codex"].includes(preset)) die("preset must be auto, main-claude or main-codex");
+  writeJson(CONFIG_FILE, { ...cfg, preset });
+  console.log(JSON.stringify({ preset, saved_to: CONFIG_FILE }));
 }
-
-// ---------- command builders ----------
-function buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId }) {
-  if (backend === "claude") {
-    const args = ["-p", "--output-format", "json", "--model", model, "--effort", effort,
-      "--permission-mode", write ? "acceptEdits" : "plan",
-      "--disallowedTools", "Agent,Task",
-      "--json-schema", fs.readFileSync(SCHEMA_PATH, "utf8")];
-    if (resumeId) args.push("--resume", resumeId);
-    if (!write) args.push("--append-system-prompt", "You are read-only. Do not create, modify or delete files.");
-    args.push(prompt);
-    return { cmd: "claude", args };
-  }
-  if (backend === "codex") {
-    // delegation depth is 1: a worker gets no subagents of its own. `agents.enabled=false`
-    // drops the [agents] roles; --disable multi_agent(_v2) drops the spawn_agent tool itself.
-    const noSubagents = ["-c", "agents.enabled=false", "--disable", "multi_agent", "--disable", "multi_agent_v2"];
-    const args = ["exec", "--json", "--skip-git-repo-check",
-      "-s", write ? "workspace-write" : "read-only",
-      "-c", `model_reasoning_effort="${effort}"`,
-      ...noSubagents];
-    if (resumeId) {
-      // `codex exec resume` has no -s flag (only `codex exec` does); the sandbox goes in
-      // through -c, which resume accepts. Model and schema are passed the same way as
-      // for a fresh run so a resumed turn is held to the same contract.
-      return { cmd: "codex", args: ["exec", "resume", "--json", "--skip-git-repo-check",
-        "-c", `sandbox_mode="${write ? "workspace-write" : "read-only"}"`,
-        "-c", `model_reasoning_effort="${effort}"`, ...noSubagents,
-        "-m", model, "--output-schema", SCHEMA_PATH, "-o", "__OUT__", resumeId, prompt] };
-    }
-    args.push("-m", model, "--output-schema", SCHEMA_PATH, "-o", "__OUT__", prompt);
-    return { cmd: "codex", args };
-  }
-  die(`unknown backend ${backend}`);
-}
-
-function extractResult(backend, stdout, outFile) {
-  if (backend === "claude") {
-    // stdout is a single JSON object (result message)
-    let obj = null;
-    try { obj = JSON.parse(stdout); } catch {
-      const lines = stdout.trim().split("\n"); for (const l of lines.reverse()) { try { obj = JSON.parse(l); break; } catch {} }
-    }
-    if (!obj) return { result: null, usage: null, sessionId: null, raw: stdout.slice(-4000) };
-    let result = obj.structured_output ?? null;
-    if (!result && typeof obj.result === "string") { try { result = JSON.parse(obj.result); } catch { result = { status: obj.is_error ? "failed" : "done", summary: obj.result }; } }
-    if (obj.is_error && result && result.status === "done") result.status = "failed";
-    return { result, usage: obj.usage ?? null, cost_usd: obj.total_cost_usd ?? null, sessionId: obj.session_id ?? null, turns: obj.num_turns ?? null };
-  }
-  // codex: JSONL events on stdout, final message in outFile
-  let threadId = null, usage = null, lastText = null, errorMsg = null;
-  for (const line of stdout.split("\n")) {
-    let ev; try { ev = JSON.parse(line); } catch { continue; }
-    if (ev.type === "thread.started" && ev.thread_id) threadId = ev.thread_id;
-    if (ev.type === "turn.completed" && ev.usage) usage = ev.usage;
-    if (ev.type === "item.completed" && ev.item?.type === "agent_message" && ev.item.text) lastText = ev.item.text;
-    if (ev.type === "error" && ev.message) errorMsg = ev.message;
-  }
-  let text = null; try { text = fs.readFileSync(outFile, "utf8"); } catch { text = lastText; }
-  let result = null;
-  if (text) { try { result = JSON.parse(text); } catch { const m = text.match(/\{[\s\S]*\}/); if (m) { try { result = JSON.parse(m[0]); } catch {} } if (!result) result = { status: errorMsg ? "failed" : "done", summary: text.trim() }; } }
-  if (!result && errorMsg) result = { status: "failed", summary: `ERROR: ${errorMsg}` };
-  return { result, usage, sessionId: threadId, error: errorMsg };
+function cmdDoctor() {
+  console.log(JSON.stringify({ backends: Object.entries(backendTable(config())).map(([id, b]) => ({ id, ...b,
+    cli_installed: installed(b.adapter), authentication: "not checked", actual_model: null })),
+    note: "Installed is not authenticated. Use the host's model picker/status to establish available senior models; no model calls were made." }, null, 2));
 }
 
 // ---------- run / resume ----------
@@ -906,8 +670,11 @@ async function cmdRun(opts, resumeOf = null) {
   if (process.env.DELEGATE_KIT_DEPTH) die("refusing to start a worker from inside a worker (delegation depth is 1)");
   const role = resumeOf ? resumeOf.role : opts.role;
   if (!role || !ROLES[role]) die(`--role must be one of ${Object.keys(ROLES).join("|")}`);
-  const spec = ROLES[role];
-  const route = resolveRoute({ ...opts, role, _run: true, backend: resumeOf ? resumeOf.backend : opts.backend });
+  if (opts.fallback && opts.fallback !== "none") die("Automatic fallback was removed; inspect partial work and choose an authorized executor explicitly");
+  // Resume preserves the saved adapter/family/model even if current routing preferences changed.
+  const resumeConfig = resumeOf ? { backends: { [resumeOf.backend]: { family: resumeOf.family || (resumeOf.backend === "codex" ? "gpt" : resumeOf.backend), adapter: resumeOf.adapter || resumeOf.backend } } } : null;
+  const route = resumeOf ? { ...resumeOf, preset: resumeOf.preset || "auto", dispatch: "external", model_source: "resume", allowed_backends: [resumeOf.backend] }
+    : resolveRoute({ ...opts, role, _run: true, external: true });
   const backend = resumeOf ? resumeOf.backend : route.backend;
   const model = resumeOf ? (opts.model && opts.model !== true ? opts.model : resumeOf.model) : route.model;
   const effort = resumeOf ? (opts.effort && opts.effort !== true ? opts.effort : resumeOf.effort) : route.effort;
@@ -916,18 +683,11 @@ async function cmdRun(opts, resumeOf = null) {
   if (!resumeOf && route.dispatch === "native" && !opts["no-route-hint"]) {
     process.stderr.write(`agent-run: the ${route.parent} parent could run this ${backend} ${role} as a native subagent (${route.invoke.subagent_type || route.invoke.agent}); running it as an external session instead.\n`);
   }
-  // A Claude name passed to codex (or the reverse) fails deep inside the vendor CLI
-  // with an opaque error, so catch the family mismatch here.
-  if (opts.model) {
-    const family = /^gpt-/.test(model) ? "codex" : "claude";
-    if (family !== backend) {
-      die(`--model ${model} is a ${family} model but --backend is ${backend}. ` +
-          `claude: fable | opus | sonnet | haiku. codex: gpt-5.6-sol | gpt-5.6-terra | gpt-5.6-luna.`);
-    }
-  }
-  if (!validEffort(backend, effort)) die(`--effort must be ${EFFORTS.join("|")}${backend === "codex" ? "|ultra" : ""} (got ${effort})`);
+  if (resumeOf && (opts.model || opts.effort)) die("resume keeps the original model and effort; start a fresh run to change them");
+  const adapter = route.adapter || resumeConfig?.backends[backend].adapter;
+  const family = route.family || resumeConfig?.backends[backend].family;
   const cwd = path.resolve(opts.cwd || (resumeOf ? resumeOf.cwd : process.cwd()));
-  const write = opts.write === true ? true : opts.write === "false" ? false : spec.write;
+  const write = opts.write === true ? true : opts.write === "false" ? false : ROLES[role].write;
   if (!fs.existsSync(cwd)) die(`cwd does not exist: ${cwd}`);
   if (write && !resumeOf && !opts["allow-main-checkout"]) {
     const g = gitDirOf(cwd);
@@ -937,7 +697,6 @@ async function cmdRun(opts, resumeOf = null) {
   let prompt = opts.prompt;
   if (!prompt && opts.brief) { if (!fs.existsSync(opts.brief)) die(`brief not found: ${opts.brief}`); prompt = fs.readFileSync(opts.brief, "utf8"); }
   if (!prompt) die("provide --brief FILE or --prompt TEXT");
-  const rawBrief = prompt;
   const lens = opts.lens && opts.lens !== true ? String(opts.lens) : null;
   if (lens && !LENSES[lens]) die(`--lens must be ${Object.keys(LENSES).join("|")} (got ${lens})`);
   if (lens && role !== "reviewer") die("--lens applies to --role reviewer only");
@@ -948,22 +707,27 @@ async function cmdRun(opts, resumeOf = null) {
   if (onFinishRaw === true) die(`--on-finish needs a shell command, e.g. --on-finish 'echo "$DK_ROLE $DK_STATUS" >> ~/dk-done.log'`);
   const onFinish = onFinishRaw ? String(onFinishRaw) : null;
 
+  // Validate adapter arguments before reserving locks or starting a detached supervisor.
+  const id = opts.id || newId();
+  const agentName = resumeOf?.agentName || `delegate-kit-${id}`;
+  if (opts._supervise) SUPERVISED = { id, role, backend, model, effort, cwd, write };
+  const permissionRules = adapter === "opencode" ? inspectPermissions({ cwd, agentName, model }) : undefined;
+  const built = buildCommand({ adapter, model, effort, prompt, write, resumeId: resumeOf?.sessionId, skillDir: SKILL_DIR, agentName, permissionRules });
+  const inlineConfig = built.config ? mergeInline(built.config) : null;
   const caps = resolveCaps(opts);
-  if (opts._supervise) SUPERVISED = { id: opts.id, role, backend, model, effort, cwd, write };
-  // The initial supervised start runs under the mutex its parent still holds; every other
-  // start (foreground, detach parent, quota fallback) takes it itself.
-  if (!opts._supervise || opts._fallbackFrom) { acquireCapsMutex(); if (write) acquireRepoMutex(cwd); }
+  // Each process owns its admission locks; preflight never relies on a parent lock.
+  acquireCapsMutex(); if (write) acquireRepoMutex(cwd);
   checkCaps(caps, write, cwd);
   if (write) { const conflict = writeLockConflict(cwd, null); if (conflict) die(conflict); }
 
   if (opts.detach && !opts._supervise) {
-    const id = newId();
     const args = process.argv.slice(2).filter((a) => a !== "--detach");
     args.push("--_supervise", "--id", id);
+    releaseCapsMutex();
     const sup = spawn(process.execPath, [fileURLToPath(import.meta.url), ...args], { detached: true, stdio: "ignore", cwd: process.cwd(), env: process.env });
     sup.unref();
     // wait briefly for meta.json so the caller can see the run
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + (adapter === "opencode" ? 25000 : 5000);
     while (Date.now() < deadline && !fs.existsSync(path.join(runDir(id), "meta.json"))) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); }
     const m = metaOf(id);
     releaseCapsMutex();
@@ -972,22 +736,20 @@ async function cmdRun(opts, resumeOf = null) {
     return;
   }
 
-  const id = opts.id || newId();
   // Re-check inside the supervisor: another run may have taken a slot since the parent looked.
   checkCaps(caps, write, cwd);
   fs.mkdirSync(runDir(id), { recursive: true });
   const outFile = path.join(runDir(id), "last-message.txt");
-  const built = buildCommand({ backend, role, model, effort, cwd, prompt, write, resumeId: resumeOf?.sessionId });
   built.args = built.args.map((a) => (a === "__OUT__" ? outFile : a));
   const panel = opts.panel && opts.panel !== true ? String(opts.panel) : null;
-  const meta = { id, role, backend, model, effort, cwd, write, preset: route.preset, dispatch: "external", lens, panel, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, fallbackFrom: opts._fallbackFrom ?? null, onFinish, delivery: onFinish ? { state: "pending", attempts: 0, nextAttemptAt: null, lastError: null, deliveredAt: null } : null };
+  const meta = { id, role, backend, family, adapter, agentName: adapter === "opencode" ? agentName : null, model, modelSource: route.model_source, actualModel: null, effort, cwd, write, preset: route.preset, dispatch: "external", lens, panel, status: "running", pid: null, started: nowIso(), resumeOf: resumeOf?.id ?? null, sessionId: resumeOf?.sessionId ?? null, timeoutMin, onFinish, delivery: onFinish ? { state: "pending", attempts: 0, nextAttemptAt: null, lastError: null, deliveredAt: null } : null };
   if (write) meta.lock = acquireWriteLock(cwd, id, role);
   fs.writeFileSync(path.join(runDir(id), "prompt.md"), prompt);
 
   const stdoutPath = path.join(runDir(id), "stdout.log");
   const stderrPath = path.join(runDir(id), "stderr.log");
   const child = spawn(built.cmd, built.args, { cwd, detached: true, stdio: ["ignore", fs.openSync(stdoutPath, "w"), fs.openSync(stderrPath, "w")],
-    env: { ...process.env, DELEGATE_KIT_DEPTH: "1", DELEGATE_KIT_RUN_ID: id } });
+    env: { ...process.env, ...(inlineConfig ? { OPENCODE_CONFIG_CONTENT: inlineConfig, OPENCODE_AUTO_SHARE: "false" } : {}), DELEGATE_KIT_DEPTH: "1", DELEGATE_KIT_RUN_ID: id } });
   meta.pid = child.pid; saveMeta(meta);
   releaseCapsMutex();
   child.unref();
@@ -995,14 +757,15 @@ async function cmdRun(opts, resumeOf = null) {
   const finish = (code, signal) => {
     const m = metaOf(id); if (!m || m.status !== "running") return;
     const stdout = fs.readFileSync(stdoutPath, "utf8");
-    const ex = extractResult(backend, stdout, outFile);
+    const ex = extractResult(adapter, stdout, outFile, JSON.parse(fs.readFileSync(SCHEMA_PATH, "utf8")));
+    m.actualModel = ex.actualModel;
     m.status = signal === "SIGKILL" && m.killReason ? m.killReason : code === 0 && !ex.error ? "finished" : "failed";
     m.exitCode = code; m.finished = nowIso(); m.sessionId = ex.sessionId ?? m.sessionId; m.usage = ex.usage ?? null; m.cost_usd = ex.cost_usd ?? null;
     m.result = ex.result ?? { status: "failed", summary: `worker exited with code ${code}; see stderr.log` };
     if (m.result && m.result.status) m.workerStatus = m.result.status;
     if (write) { releaseWriteLock(cwd, id); delete m.lock; }
     saveMeta(m); writeJson(path.join(runDir(id), "result.json"), m.result);
-    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, model, effort, preset: m.preset ?? null, dispatch: "external", lens: m.lens ?? null, panel: m.panel ?? null, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
+    fs.appendFileSync(LEDGER, JSON.stringify({ id, role, backend, family, adapter, model, actual_model: m.actualModel, model_source: m.modelSource, effort, preset: m.preset ?? null, dispatch: "external", lens: m.lens ?? null, panel: m.panel ?? null, cwd, write, started: m.started, finished: m.finished, duration_s: Math.round((Date.parse(m.finished) - Date.parse(m.started)) / 1000), status: m.status, worker_status: m.workerStatus ?? null, usage: m.usage, cost_usd: m.cost_usd, sessionId: m.sessionId, fallback_from: m.fallbackFrom ?? null }) + "\n");
   };
 
   /*
@@ -1025,26 +788,20 @@ async function cmdRun(opts, resumeOf = null) {
     m.killReason = "timeout"; saveMeta(m);
     try { process.kill(-child.pid, "SIGKILL"); } catch { try { process.kill(child.pid, "SIGKILL"); } catch {} }
   }, timeoutMin * 60_000);
+  child.on("error", async (error) => {
+    clearTimeout(timer);
+    fs.appendFileSync(stderrPath, `Unable to start ${adapter}: ${error.code || "spawn error"}\n`);
+    finish(1, null);
+    await deliverWithRetries(id);
+    if (!opts._supervise) printResult(id);
+    process.exit(1);
+  });
   child.on("exit", async (code, signal) => {
     clearTimeout(timer); finish(code, signal);
     const m = metaOf(id);
-    const fallbackMode = opts.fallback || process.env.DELEGATE_KIT_FALLBACK || "auto";
-    if (fallbackMode !== "none" && !opts._fallbackFrom && !resumeOf && isQuotaError(m, fs.readFileSync(stderrPath, "utf8"))) {
-      const nb = otherBackend(backend);
-      process.stderr.write(`agent-run: ${backend} reported a usage/rate limit; retrying once on ${nb} (fallback). Use --fallback none to disable.\n`);
-      m.status = "failed-quota"; saveMeta(m);
-      // A writer may have committed or left edits before the limit hit: the rerun is told what
-      // it inherits. `ultra` exists on Codex only; the nearest Claude effort is xhigh.
-      const state = write ? inspectWorktree(cwd) : null;
-      const brief = state && state.partial ? `${state.note}\n\n${rawBrief}` : rawBrief;
-      if (state && state.partial) process.stderr.write(`agent-run: the fallback worker inherits ${state.commits.length} commit(s) and ${state.dirty.length} uncommitted file(s) from ${id}; the brief says so.\n`);
-      const effort = opts.effort === "ultra" && nb === "claude" ? "xhigh" : opts.effort;
-      const next = { ...opts, backend: nb, model: undefined, effort, prompt: brief, brief: undefined, _fallbackFrom: id, detach: false, id: undefined };
-      await cmdRun(next, null);
-      return;
-    }
+    // Switching providers/model after partial writes is a coordinator decision, never a hidden retry.
     await deliverWithRetries(id);
-    if (!opts._supervise) printResult(id); process.exit(0);
+    if (!opts._supervise) printResult(id); process.exit(m.status === "finished" && m.workerStatus !== "failed" ? 0 : 1);
   });
 
   if (opts.detach) {
@@ -1055,8 +812,8 @@ async function cmdRun(opts, resumeOf = null) {
 
 function printResult(id) {
   const m = touch(metaOf(id)); if (!m) die(`unknown run ${id}`);
-  const out = { id: m.id, role: m.role, backend: m.backend, model: m.model, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, lifecycle: lifecycleOf(m), delivery: m.delivery ?? undefined, fallback_from: m.fallbackFrom ?? undefined,
-    note: m.fallbackFrom ? `ran on ${m.backend} because the other vendor hit a usage limit${m.role === "reviewer" || m.role === "verifier" ? "; check that the reviewer is still a different vendor than the author" : ""}` : undefined, worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
+  const out = { id: m.id, role: m.role, backend: m.backend, family: m.family, adapter: m.adapter, model: m.model, actual_model: m.actualModel ?? null, model_source: m.modelSource, effort: m.effort, lens: m.lens ?? undefined, panel: m.panel ?? undefined, cwd: m.cwd, status: m.status, lifecycle: lifecycleOf(m), delivery: m.delivery ?? undefined, fallback_from: m.fallbackFrom ?? undefined,
+worker_status: m.workerStatus ?? null, sessionId: m.sessionId ?? null, usage: m.usage ?? null, cost_usd: m.cost_usd ?? null, started: m.started, finished: m.finished ?? null, result: m.result ?? null, logs: runDir(id) };
   process.stdout.write(JSON.stringify(out, null, 2) + "\n");
 }
 
@@ -1092,6 +849,7 @@ switch (sub) {
   case "run": await cmdRun(argv); break;
   case "route": cmdRoute(argv); break;
   case "preset": cmdPreset(argv); break;
+  case "doctor": cmdDoctor(); break;
   case "resume": { const prev = metaOf(argv._[1]); if (!prev) die(`unknown run ${argv._[1]}`); if (!prev.sessionId) die(`run ${argv._[1]} has no session id to resume`); await cmdRun({ ...argv, cwd: argv.cwd || prev.cwd }, prev); break; }
   case "list": cmdList(); break;
   case "status": printResult(argv._[1]); break;
@@ -1101,56 +859,36 @@ switch (sub) {
   case "notify": cmdNotify(argv); break;
   case "inspect": cmdInspect(argv._[1]); break;
   default:
-    console.log(`agent-run — headless workers for Claude Code / Codex with role defaults, worktree locks and a ledger
+    console.log(`agent-run — family-aware workers, worktree locks and verified result contracts
 
-  agent-run route --role <${Object.keys(ROLES).join("|")}> [--preset P] [--parent claude|codex] [--author-backend claude|codex|self] [--kind ui|refactor|mechanical]
-                                          who should run this role, on which family, natively or externally;
-                                          --author-backend is required for reviewer and verifier (self = the coordinator wrote the diff)
-  agent-run route --role reviewer [--diff FILE] [--depth single|panel|led]
-                                          how many reviewers this diff deserves, which lens and family each gets, and the lead
-  agent-run preset [${Object.keys(PRESETS).join("|")}]     show or persist the default preset
-  agent-run run --role <${Object.keys(ROLES).join("|")}> [--preset P] [--backend claude|codex] [--model M] [--effort E]
-                [--cwd DIR] (--brief FILE | --prompt TEXT) [--detach] [--timeout MIN] [--write true|false] [--allow-main-checkout] [--fallback auto|none]
-                [--on-finish CMD]                       shell command run when this run reaches a terminal state
-                [--max-writers N]                      writer cap for this run (default ${WRITERS_DEFAULT}, ceiling ${WRITERS_CEILING})
-                [--lens spec|correctness|standards] [--panel ID]      (reviewer only: lens preamble; panel id groups runs in the ledger)
-  agent-run resume <id> (--brief FILE | --prompt TEXT) [--detach]
-  agent-run list | status <id> | wait <id> [--timeout MIN] | kill <id> | log <id> [out|err|prompt]
-  agent-run notify [<id>] [--force]       deliver any completion still pending (retries due ones); no id drains all
-  agent-run inspect [<worktree>]          what a stopped worker left: base, commits since base, uncommitted files, and
-                                          the note a fallback rerun of a writer is given about them
+  route --role ROLE [--parent BACKEND] [--parent-model MODEL]
+        [--mode auto|solo|duo] [--families BACKEND,BACKEND]
+        [--backend BACKEND] [--model MODEL] [--effort E] [--external]
+        [--author-backend BACKEND|self] [--kind ui|refactor|mechanical]
+        [--diff FILE] [--depth single|panel|led]
+  run --role ROLE (--brief FILE | --prompt TEXT) [routing options]
+      [--cwd WORKTREE] [--detach] [--timeout MIN] [--max-writers N]
+      [--lens spec|correctness|standards] [--panel ID] [--on-finish CMD]
+  resume ID (--brief FILE | --prompt TEXT) [--detach]
+  doctor | preset [auto|main-claude|main-codex]
+  list | status ID | wait ID [--timeout MIN] | kill ID | log ID [out|err|prompt]
+  notify [ID] [--force] | inspect [WORKTREE]
 
---timeout on \`run\` is a fuse against a hung worker, not a schedule; without it the role decides:
-${Object.entries(ROLE_TIMEOUT_MIN).map(([r, t]) => `${r} ${t}m`).join(", ")}. A run killed by it ends as
-"timeout", a run whose supervisor died as "orphaned" — both keep whatever the worker committed, so read
-the worktree before rerunning. list, status and wait all reconcile a dead supervisor.
+No JSON required: the coordinator supplies its host and known available models.
+No pinned model: native roles inherit; external CLIs use their own configuration.
+--families lists backend IDs (codex, claude, gemini, kimi, glm or configured profiles).
+Solo permits one family; duo permits two. Models inside a family remain selectable.
+Fresh-context review always works; cross_family is separate from freshness.
+Multiple reviewers require user permission; explicit --depth or review.allow_multiple records it.
+External failures do not silently switch models/providers. Resume preserves the saved target.
+Kimi/GLM use OpenCode with an explicit provider/model. Credentials stay in the provider CLI.
+Read-only adapters may exclude shell tools; the coordinator runs acceptance commands.
 
---on-finish is how the parent learns a worker finished without polling — the point of it is a worker
-from the OTHER family, where no harness reports back. The command runs once per run, with the full
-result JSON on stdin and DK_RUN_ID, DK_ROLE, DK_BACKEND, DK_MODEL, DK_STATUS, DK_WORKER_STATUS,
-DK_LIFECYCLE, DK_CWD, DK_SUMMARY, DK_RESULT_PATH, DK_LOGS_DIR, DK_ATTEMPT in the environment.
-A non-zero exit is a failed delivery, retried at 5s/15s/45s/120s: by the live supervisor first, then by
-whoever next runs list, status, wait or notify. Exactly once — a claim file keeps two processes from
-both delivering. After ${DELIVERY_MAX_ATTEMPTS} attempts the delivery is marked failed and only
-\`notify <id> --force\` will retry it. A run that failed on quota delivers nothing: its fallback rerun does.
-
-Caps: writers ${WRITERS_DEFAULT} by default, ceiling ${WRITERS_CEILING}; workers = writers + ${WORKERS_HEADROOM}. External runs count machine-wide, native
-locks (\`agent-wt lock\`) within the repository of --cwd. --max-writers N raises the cap for this run,
-DELEGATE_KIT_MAX_WRITERS for the session (DELEGATE_KIT_MAX_WORKERS overrides the total, floored at
-writers + 1); the ceiling holds against both. A run refused by a cap or a locked worktree fails before
-anything is spawned, --detach included: the parent prints the reason; a refusal inside the supervisor
-(a race) is recorded as failed. Concurrent starts count and take their slot under one mutex.
-
-lifecycle is orthogonal to status: running, or parked when the session can still be revived with
-\`resume\`, or done when it cannot. status says how it ended, lifecycle whether you can go back to it.
-
-Presets move the token-heavy roles (planner, implementer, researcher) to one family; reviewer and
-verifier follow the author: the other family when its CLI is installed, otherwise a fresh native
-worker of the parent's family (route marks it independent:false). Precedence: --preset > DELEGATE_KIT_PRESET
-> ${CONFIG_FILE} > auto. Per-role model/effort defaults can be overridden in the same file under
-"roles": { "<role>": { "claude": ["model","effort"], "codex": ["model","effort"] } }; \`agent-run preset\` shows the effective table.
-
-State: ${STATE_DIR}  (config.json, runs/<id>/{meta.json,prompt.md,stdout.log,stderr.log,result.json}, ledger.jsonl)`);
+Writers: ${WRITERS_DEFAULT} by default, ceiling ${WRITERS_CEILING}; workers = writers + ${WORKERS_HEADROOM}.
+Timeout minutes: ${Object.entries(ROLE_TIMEOUT_MIN).map(([r, t]) => `${r} ${t}`).join(", ")}.
+--on-finish receives the result on stdin and DK_* metadata; failed delivery is retried.
+State: ${STATE_DIR}; configuration: ${CONFIG_FILE}.
+See references/routing.md and references/providers.md for contracts and verified CLI details.`);
 }
 }
 main().catch((e) => die(String(e?.stack || e)));

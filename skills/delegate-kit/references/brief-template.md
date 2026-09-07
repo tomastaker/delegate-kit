@@ -2,7 +2,9 @@
 
 Keep it under ~40 lines. The worker reads the code itself; your job is to remove ambiguity, not to narrate the repository.
 
-The same brief serves both dispatch paths: `--brief` for an external `agent-run` worker, or the prompt body for a native subagent. Do not restate the role in it — the role preamble comes from `agent-run` or from the installed `dk-*` definition. A native writer needs one extra line the external one gets from `--cwd`: **the absolute worktree path it may touch.**
+The same brief serves both dispatch paths: `--brief` for an external `agent-run` worker, or the prompt body for a native subagent. Do not restate the role in it — the role preamble comes from `agent-run` or from the installed `dk-*` definition. Stage spec/diff files within the permitted directory, or include their contents in the brief, when the adapter denies external-directory reads. Shell checks excluded by the adapter belong to the coordinator.
+
+A native writer needs one extra line the external one gets from `--cwd`: **the absolute worktree path it may touch.**
 
 ```markdown
 # Task: <short name>

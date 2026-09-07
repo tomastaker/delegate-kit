@@ -1,0 +1,5 @@
+# A worker cannot start more workers or expand its scope through MCP tools.
+[[rule]]
+toolName = ["invoke_agent", "codebase_investigator", "mcp_*"]
+decision = "deny"
+priority = 999

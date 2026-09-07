@@ -30,3 +30,6 @@ if [ -f "$cfg" ] && grep -q '^# >>> delegate-kit agents >>>' "$cfg"; then
   awk '/^# >>> delegate-kit agents >>>/{skip=1} !skip{print} /^# <<< delegate-kit agents <<</{skip=0}' "$cfg.bak-delegate-kit-$ts" > "$cfg"
   echo "removed [agents.dk-*] from $cfg (backup: $cfg.bak-delegate-kit-$ts)"
 fi
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+node "$HERE/native-agents.mjs" uninstall "$(cd "$HERE/.." && pwd)" "$CODEX_DIR" 0

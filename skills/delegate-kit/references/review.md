@@ -2,19 +2,13 @@
 
 How many reviewers a diff deserves, which angle each one takes, and how their findings become one list. `agent-run route --role reviewer --diff <file> --author-backend <family|self>` applies all of it and prints the result; this file is the reasoning behind that output.
 
-## Independence is the first slot, not the whole review
+## Fresh context and family diversity
 
-One reviewer from the other family than the author buys **independence**: two families share fewer blind spots than one. No preset, panel or quota pressure moves slot A off the other family. Two things do. Availability: when that family's CLI is not installed, `route` places slot A as a fresh read-only worker of the author's family, marks it `independent: false`, and the report names which one ran. And the user: an explicit `--backend` on `route --role reviewer` pins slot A (the alternation runs from it), and a same-family pin is reported as `independent: false` too. A fresh context is still a real review; the other family is the stronger one.
+Every review uses a fresh read-only agent and a frozen diff/spec. This applies equally in solo and duo. Family diversity is a separate property, not a binary label for whether a review counts.
 
-A second reviewer with the same brief buys almost nothing: the obvious findings come back twice and the subtle ones stay missed, because both reviewers looked from the same angle. What a second slot should buy is a second **lens**. So a panel is composed as lenses first, families second:
+In duo, prefer another capable family when otherwise comparable. User assignments and known task suitability can select the author's family. A second slot should add a complementary lens and independently gathered evidence, rather than merely endorsing the first reviewer. It can belong to the same family in solo.
 
-| Slot | Lens | Family | Buys |
-|---|---|---|---|
-| A | `correctness` (or the lead's pick) | the other family than the author | independence |
-| B | `spec` | the author's family is allowed | coverage |
-| C | `standards` | alternates back | coverage |
-
-Slot B may sit on the author's family because independence is already paid for by A; that is also what keeps a panel affordable when one subscription is the scarce one.
+Slots use correctness, spec and standards priorities. The coordinator can choose a different composition when justified by the task; state the reason. A hard reviewer backend assignment applies to every slot. See routing.md for mode boundaries and preferences.
 
 ## Depth
 
@@ -28,7 +22,7 @@ A **mechanical** diff (formatting, lockfile bump, generated client) is always `s
 
 The thresholds are starting points. The ledger records `lens` and `panel` per run: after a few panels, look at how many findings slot B raised that A did not and how many of those survived verification. If B keeps returning one low-severity nit per panel, raise the thresholds.
 
-**A panel is always proposed, never assumed.** More than one session on one review is a cost the user decides on. `route` prints the numbers (`lines`, `files`, `modules`, `risk_zones`, `cost_note`); put them in the proposal and wait for the yes. `--depth` set explicitly is that yes.
+**A panel requires permission.** A standing `review.allow_multiple` grant or explicit user request can supply it; otherwise propose it. More than one session on one review is a cost the user decides on. `route` prints the numbers (`lines`, `files`, `modules`, `risk_zones`, `cost_note`); put them in the proposal and wait for the yes. `--depth` records that permission; the coordinator must not use it to grant itself permission.
 
 ## Lenses
 
@@ -68,7 +62,7 @@ Four structural checks sit alongside the smells, adapted from addyosmani/agent-s
 
 ## The lead
 
-At `led` depth the **review lead** (`dk-review-lead`; strongest model of the preset's planner family) is called twice, and both calls are short because it reads *around* the diff, not through it:
+At `led` depth the **review lead** (`dk-review-lead`; main senior model selected for planning) is called twice, and both calls are short because it reads *around* the diff, not through it:
 
 1. **Before** — spec plus diff stat in, `plan` out: one reviewer per step with lens, files to concentrate on, exclusions, and the brief text. The brief is the most consequential artifact of the whole review, which is why the strongest model writes it.
 2. **After** — the reviewers' result JSONs in, one merged `findings` list out, by the rules below.
@@ -79,7 +73,7 @@ At `panel` depth the parent does both jobs itself with the same rules; the lead 
 
 Reviewers run **in parallel and blind to each other**. A reviewer that reads another's findings anchors on them and the second opinion collapses into agreement; the merge is a separate step.
 
-- Same defect from two reviewers, even in different words → one finding, `raised_by: "A,B"`, higher confidence, no verifier.
+- Same defect from two reviewers, even in different words → one finding, `raised_by: "A,B"`, one merged claim; corroboration alone does not prove correctness.
 - Raised by one, not mentioned by the other → coverage, not a dispute. Keep it.
 - One says high, the other **explicitly** says the same place is fine → a dispute. Settle it by a command first (a test, a typecheck, `npm ls`); spend a verifier only when a command cannot.
 - Dedupe by meaning; `file:line` catches only the trivial duplicates.

@@ -13,6 +13,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Bash syntax + shellcheck
         run: |
           sudo apt-get install -y -qq shellcheck >/dev/null
@@ -20,11 +23,15 @@ jobs:
           for f in $files; do bash -n "$f"; done
           shellcheck -S warning $files
       - name: Node syntax
-        run: node --check skills/delegate-kit/scripts/agent-run
+        run: |
+          node --check skills/delegate-kit/scripts/agent-run
+          for f in skills/delegate-kit/scripts/*.mjs skills/delegate-kit/hooks/*.mjs; do node --check "$f"; done
       - name: Writer caps and detach refusal
         run: bash skills/delegate-kit/tests/caps.sh
       - name: Routing policy
         run: bash skills/delegate-kit/tests/route.sh
+      - name: Completion delivery
+        run: bash skills/delegate-kit/tests/delivery.sh
       - name: Safety gate
         run: bash skills/delegate-kit/tests/gate.sh
       - name: Worktree inspect for reruns

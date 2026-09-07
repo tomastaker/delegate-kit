@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install delegate-kit into Claude Code and Codex CLI:
 #   1. the gate hook   -> ~/.claude/settings.json (PreToolUse) and ~/.codex/hooks.json
-#   2. the native subagent roles -> ~/.claude/agents/dk-*.md and [agents.dk-*] in ~/.codex/config.toml
+#   2. native subagent roles -> ~/.claude/agents/dk-*.md and ~/.codex/agents/dk-*.toml
 # Idempotent. Backs up every file it edits and prints a diff first.
 #   --claude / --codex   only that harness      --hooks-only / --agents-only   only that half
 #   --dry-run            show diffs, change nothing
@@ -10,7 +10,6 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 SKILL=$(cd "$HERE/.." && pwd)
 GATE="$HERE/gate.sh"
 AGENTS_DIR="$SKILL/agents"
-CODEX_AGENTS="$SKILL/references/codex-agents.toml"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
 DO_CLAUDE=1; DO_CODEX=1; DO_HOOKS=1; DO_AGENTS=1; DRY=0
@@ -25,8 +24,8 @@ TS=$(date +%Y%m%d-%H%M%S)
 
 apply() { # $1 target file, $2 tmp file with the new content, $3 label
   local file=$1 tmp=$2
-  if diff -u "$file" "$tmp" >/dev/null 2>&1; then echo "$file: already up to date"; rm -f "$tmp"; return; fi
-  echo "--- changes for $file:"; diff -u "$file" "$tmp" || true
+  if [ -f "$file" ] && diff -u "$file" "$tmp" >/dev/null 2>&1; then echo "$file: already up to date"; rm -f "$tmp"; return; fi
+  echo "--- changes for $file:"; diff -u "${file}" "$tmp" 2>/dev/null || cat "$tmp"
   if [ $DRY -eq 1 ]; then rm -f "$tmp"; return; fi
   [ -f "$file" ] && cp "$file" "$file.bak-delegate-kit-$TS"
   mv "$tmp" "$file"; echo "updated $file${file:+ (backup: $file.bak-delegate-kit-$TS)}"
@@ -34,13 +33,12 @@ apply() { # $1 target file, $2 tmp file with the new content, $3 label
 
 merge_hook() { # $1 file, $2 harness
   local file=$1 harness=$2
-  mkdir -p "$(dirname "$file")"
-  [ -f "$file" ] || echo '{}' > "$file"
+  if [ "$DRY" -eq 0 ]; then mkdir -p "$(dirname "$file")"; fi
   local tmp; tmp=$(mktemp)
   node - "$file" "$GATE" "$harness" > "$tmp" <<'EOF'
 const fs = require("fs");
 const [file, gate, harness] = process.argv.slice(2);
-const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
+const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
 cfg.hooks ??= {};
 cfg.hooks.PreToolUse ??= [];
 const entry = { matcher: "Bash", hooks: [{ type: "command", command: `${JSON.stringify(gate).slice(1, -1)} --harness ${harness}`, timeout: 10, statusMessage: "delegate-kit gate" }] };
@@ -67,25 +65,8 @@ link_claude_agents() { # symlink the role definitions so edits in the repo take 
   done
 }
 
-merge_codex_agents() { # splice the [agents.dk-*] block between markers in config.toml
-  local file="$CODEX_DIR/config.toml"
-  mkdir -p "$CODEX_DIR"; [ -f "$file" ] || : > "$file"
-  local tmp; tmp=$(mktemp)
-  node - "$file" "$CODEX_AGENTS" > "$tmp" <<'EOF'
-const fs = require("fs");
-const [file, block] = process.argv.slice(2);
-const START = "# >>> delegate-kit agents >>>", END = "# <<< delegate-kit agents <<<";
-const body = [START, fs.readFileSync(block, "utf8").trimEnd(), END].join("\n");
-let cfg = fs.readFileSync(file, "utf8");
-// markers match whole lines only, so the same text inside a comment never counts
-const lineIdx = (s, marker) => { const m = new RegExp(`^${marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m").exec(s); return m ? m.index : -1; };
-const i = lineIdx(cfg, START);
-const j = i === -1 ? -1 : (() => { const k = lineIdx(cfg.slice(i + START.length), END); return k === -1 ? -1 : i + START.length + k; })();
-if (i !== -1 && j !== -1) cfg = cfg.slice(0, i) + body + cfg.slice(j + END.length);
-else cfg = cfg.replace(/\s*$/, "") + (cfg.trim() ? "\n\n" : "") + body + "\n";
-process.stdout.write(cfg);
-EOF
-  apply "$file" "$tmp"
+merge_codex_agents() {
+  node "$HERE/native-agents.mjs" install "$SKILL" "$CODEX_DIR" "$DRY"
 }
 
 if [ $DO_HOOKS -eq 1 ]; then

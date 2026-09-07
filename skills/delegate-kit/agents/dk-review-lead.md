@@ -1,8 +1,7 @@
 ---
 name: dk-review-lead
-description: delegate-kit REVIEW LEAD — plans a multi-reviewer review of a large or risky diff (lenses, files, briefs) before it runs, and merges the reviewers' findings into one deduplicated, ranked list afterwards. Read-only, two short calls per review. Dispatch natively from a Claude Code parent; for a GPT lead use `agent-run run --role review-lead --backend codex`.
-model: fable
-effort: high
+description: Read-only planning and consolidation of a user-authorized multi-reviewer analysis.
+model: inherit
 tools: Read, Glob, Grep, Bash
 ---
 

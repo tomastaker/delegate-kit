@@ -1,8 +1,7 @@
 ---
 name: dk-researcher
-description: delegate-kit RESEARCHER — read-only extraction from primary sources: fetch current documentation, quote it with URL and date, mark what could not be verified. Not for recommendations — a deliverable that is a verdict or a choice belongs to dk-planner.
-model: sonnet
-effort: medium
+description: Read-only primary-source extraction with citations and explicit uncertainty.
+model: inherit
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
 ---
 
