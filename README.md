@@ -64,7 +64,15 @@ An occasional **finding verifier** resolves disputed findings; a **review lead**
 
 ## Choose your models in one file
 
-Edit **`~/.delegate-kit/config.json`**. Each profile describes the team to use when that family is coordinating. A GPT chat selects `profiles.gpt`; a Claude chat selects `profiles.claude`; a Kimi chat selects `profiles.kimi`. The chat model itself stays unchanged.
+Edit **`~/.delegate-kit/config.json`** (or `$DELEGATE_KIT_HOME/config.json` if you override the state directory). This one file holds all your profiles under `profiles`. Each profile describes a team of workers; the coordinator is the model already running in your chat.
+
+**GPT, Claude and Kimi are example teams. You can add your own profiles.** To get started:
+
+1. Open the [example config.json](skills/delegate-kit/examples/config.json). It contains all three teams in one file.
+2. For a first configuration, save a copy at the path above. If you already have a configuration, merge the profiles you want into its existing `profiles` object, preserving your other settings. Profiles are entries inside this file; they do not need separate files or renaming.
+3. Keep the teams you need and replace their model identifiers and reasoning settings with choices supported by your host or CLI. Add another named entry under `profiles` for each additional team.
+
+By default, the coordinator family selects the matching profile: `--parent codex` selects `profiles.gpt`, `--parent claude` selects `profiles.claude`, and `--parent kimi`, `glm` or `gemini` selects the corresponding name. Codex and Claude sessions can be detected from their environment; specify `--parent` for other hosts. An explicit `--profile NAME` selects a particular team. Neither option starts or changes the chat model.
 
 Each role is an ordered list. **The first entry is the usual choice; later entries are available strengthening steps.** These are alternatives, not agents all launched together.
 
@@ -105,7 +113,55 @@ These model names illustrate a personal setup, not required dependencies or a qu
 | Claude | Sonnet → Opus, native | Fable, native | Opus medium → high, native | Astra through Codex CLI |
 | Kimi | Current Kimi model, native | Astra through Codex CLI | Current Kimi model, native | GLM through OpenCode |
 
-The Kimi example inherits your current native model instead of guessing its identifier. It requires a host with native worker support. Replace `YOUR_PROVIDER/YOUR_GLM_MODEL` with the exact identifier shown by `opencode models`. Copy the profiles you want and keep only models you permit the coordinator to use. Configuration never installs a model or changes provider credentials.
+The Kimi example inherits your current native model instead of guessing its identifier. It requires a host with native worker support. Replace `YOUR_PROVIDER/YOUR_GLM_MODEL` with the exact identifier shown by `opencode models`. Configuration never installs a model or changes provider credentials.
+
+### Add your own team: GLM with Claude and GPT
+
+Suppose your chat already runs GLM 5.3. This configuration assigns native GLM research and implementation, Claude planning, and GPT review:
+
+```json
+{
+  "profiles": {
+    "glm": {
+      "roles": {
+        "researcher": [
+          { "runner": "native" }
+        ],
+        "planner": [
+          { "family": "claude", "runner": "claude", "model": "opus" }
+        ],
+        "implementer": [
+          { "runner": "native" }
+        ],
+        "reviewer": [
+          { "family": "gpt", "runner": "codex", "model": "YOUR_GPT_MODEL" }
+        ]
+      }
+    }
+  }
+}
+```
+
+Add the `glm` entry beside your other profiles. Replace `YOUR_GPT_MODEL` with the exact model identifier accepted by your Codex CLI; use an available Claude model in place of `opus` if needed. Omitted native model settings inherit from the current session. Native execution requires real subagent tools in that host. If those tools are unavailable, replace each native GLM assignment with an explicit OpenCode assignment from the table below.
+
+From a checkout, inspect the selected routes without calling a model:
+
+```bash
+skills/delegate-kit/scripts/agent-run route --parent glm --role implementer
+skills/delegate-kit/scripts/agent-run route --parent glm --role reviewer --author-backend self
+```
+
+The first route selects a native GLM implementer; the second selects an external GPT reviewer through Codex. GLM remains the coordinator for both.
+
+To keep different teams for two GLM versions or hosts, name them, for example, `glm-5-3` and `glm-in-opencode`, and explicitly select the desired profile:
+
+```bash
+skills/delegate-kit/scripts/agent-run route --parent glm --profile glm-5-3 --role implementer
+```
+
+Create that named entry under `profiles` before using the command. Profile names start with a lowercase letter and use lowercase letters, digits, hyphens or underscores. Automatic selection uses the family; it does not distinguish model versions or hosts. You can also tell the coordinator: “Use Delegate Kit with parent glm and profile glm-5-3.” The coordinator carries those choices into its routing calls.
+
+Profiles configure teams; support for a new execution environment depends on its tools. Native workers use the current host's actual agent tools. External workers currently use the `codex`, `claude`, `gemini` or `opencode` adapters. Models served through OpenRouter or another provider can use that provider's OpenCode configuration. A new external CLI requires a code adapter; adding a profile does not create one. Direct external Kimi CLI execution is not implemented. [Adapter contracts and provider setup](skills/delegate-kit/references/providers.md).
 
 ### Native or external?
 

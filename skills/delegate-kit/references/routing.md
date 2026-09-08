@@ -2,9 +2,11 @@
 
 ## One configuration file
 
-Edit `~/.delegate-kit/config.json`, or `$DELEGATE_KIT_HOME/config.json` when the state directory is overridden. `examples/config.json` contains complete GPT, Claude and Kimi teams. Keep credentials in the provider's configuration.
+Edit `~/.delegate-kit/config.json`, or `$DELEGATE_KIT_HOME/config.json` when the state directory is overridden. `examples/config.json` contains complete GPT, Claude and Kimi teams as examples, not an exhaustive list. All profiles live inside the same file. For a first configuration, copy the example there and customize it; for an existing configuration, merge the desired entries into `profiles`. Keep credentials in the provider's configuration. [Setup and a custom GLM team](../../../README.md#add-your-own-team-glm-with-claude-and-gpt).
 
 `profiles.<name>.roles` assigns workers for a coordinator. The family declared by `--parent` selects the profile automatically: built-in parent `codex` has family `gpt`, while `claude`, `kimi`, `glm` and `gemini` have their respective families. `--profile NAME` selects a named profile explicitly. `--parent-model` describes the current model; it does not switch the chat or select a profile by model-name guesswork. Distinct teams for two models in the same family can use named profiles and `--profile`.
+
+Names start with a lowercase letter and contain lowercase letters, digits, hyphens or underscores, such as `glm-5-3` or `glm-in-opencode`. There is no automatic profile selection by model version or host within one family. Parent detection uses the Codex/Claude environment; other hosts specify `--parent` or `DELEGATE_KIT_PARENT`. A custom parent backend must declare its family and one of the supported adapters in `backends`; it does not add a new CLI adapter or native tool capability.
 
 Top-level `roles` supplies shared defaults. The selected profile replaces each role it defines completely; roles absent from that profile use shared assignments. An absent verifier uses the reviewer ladder; an absent review-lead uses the planner ladder. With no assignment, the current model is inherited on a native route.
 
