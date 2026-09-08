@@ -129,7 +129,8 @@ test('three families can mix native and external roles without legacy pool confi
   assert.deepEqual(planner.allowed_families.sort(), ['claude', 'glm', 'gpt']);
   const researcher = route({ role: 'researcher' }, profiles);
   assert.equal(researcher.adapter, 'opencode'); assert.equal(researcher.dispatch, 'external');
-  assert.throws(() => route({ mode: 'solo' }, profiles), /solo requires/);
+  assert.equal(route({ mode: 'solo' }, profiles).family, 'gpt');
+  assert.throws(() => route({ role: 'researcher', mode: 'solo' }, profiles), /outside/);
   assert.throws(() => route({ mode: 'duo' }, profiles), /duo requires/);
   assert.throws(() => route({ role: 'researcher', families: 'codex' }, profiles), /outside/);
 });
@@ -198,4 +199,17 @@ test('materializing a same-family backend preserves candidate effort declaration
   const first = route({}, cfg);
   const second = route({ backend: first.backend, runner: first.external_adapter, model: first.model, effort: first.effort }, cfg);
   assert.equal(second.model, first.model); assert.equal(second.effort, first.effort); assert.equal(second.adapter, first.adapter);
+});
+
+test('solo limits modern profiles to the parent family without changing shared configuration', () => {
+  const cfg = structuredClone(profiles);
+  cfg.profiles.gpt.roles.planner = [{ family: 'claude', runner: 'claude', model: 'external-plan' }];
+  const original = structuredClone(cfg);
+  const implementer = route({ mode: 'solo', role: 'implementer' }, cfg);
+  assert.equal(implementer.mode, 'solo'); assert.equal(implementer.family, 'gpt');
+  assert.deepEqual(implementer.allowed_families, ['gpt']);
+  assert.throws(() => route({ mode: 'solo' }, cfg), /outside/);
+  assert.throws(() => route({ mode: 'solo', families: 'codex,claude', role: 'implementer' }, cfg), /solo requires/);
+  assert.equal(route({ mode: 'solo', families: 'claude' }, cfg).family, 'claude');
+  assert.deepEqual(cfg, original);
 });

@@ -169,9 +169,11 @@ export function resolve(opts, config = {}, env = process.env, available = instal
   if (explicitPool) allowedFamilies = pool.map(b => table[b].family);
   else if (modern) {
     allowedFamilies = [parentFamily];
-    for (const value of Object.values(assignments)) {
-      for (const item of Array.isArray(value) ? value : [value]) {
-        if (isCandidate(item)) allowedFamilies.push(candidateFamily(item));
+    if (mode !== 'solo') {
+      for (const value of Object.values(assignments)) {
+        for (const item of Array.isArray(value) ? value : [value]) {
+          if (isCandidate(item)) allowedFamilies.push(candidateFamily(item));
+        }
       }
     }
     if (mode === 'auto') allowedFamilies.push(family);
