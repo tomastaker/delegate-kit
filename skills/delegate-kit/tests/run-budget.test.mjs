@@ -59,3 +59,13 @@ test('configured task limits cannot be bypassed by omitting the task ID', () => 
   const result = command(['run', '--parent', 'codex', '--role', 'planner', '--prompt', 'x']);
   assert.notEqual(result.status, 0); assert.match(result.stderr, /--task is required/); assert.equal(launches(), 0);
 }));
+
+
+test('a task-only run can resume without an optional ticket', () => fixture(({ command, config, launches }) => {
+  config({ max_runs: 2 });
+  const first = ok(command(['run', '--parent', 'codex', '--role', 'planner', '--task', 'task-only', '--prompt', 'x']));
+  const resumed = ok(command(['resume', first.id, '--prompt', 'continue']));
+  assert.equal(resumed.task, 'task-only'); assert.equal(resumed.ticket, null);
+  assert.equal(ok(command(['budget', '--task', 'task-only'])).runs, 2);
+  assert.equal(launches(), 2);
+}));

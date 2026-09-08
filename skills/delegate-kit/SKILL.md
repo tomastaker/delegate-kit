@@ -46,7 +46,7 @@ Use `references/brief-template.md`: outcome, constraints, ownership and acceptan
 
 Every writer gets an isolated worktree and one owner. `agent-wt create <task>` branches from HEAD; account for relevant uncommitted changes first. Native writers need `agent-wt lock <task>` and the absolute path. External writers take the lock through `--cwd`. Preserve other people's edits.
 
-Set a shared task ID for native and external runs. Track starts and retries with the lightweight budget counter described in `routing.md`; include each native dispatch and resume. External `run`/`resume` records its own start. Review total starts, retries and useful progress before another wave. Explicit user limits are hard; otherwise the coordinator decides whether the next call remains worthwhile.
+Set a shared task ID for native and external runs. Track starts and retries with the lightweight budget counter described in `references/routing.md`; include each native dispatch and resume. External `run`/`resume` records its own start. Review total starts, retries and useful progress before another wave. Explicit user limits are hard; otherwise the coordinator decides whether the next call remains worthwhile.
 
 ## 4. Accept, clarify or strengthen
 

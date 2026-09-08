@@ -693,7 +693,7 @@ async function cmdRun(opts, resumeOf = null) {
   const inlineConfig = built.config ? mergeInline(built.config) : null;
   const caps = resolveCaps(opts);
   const task = opts.task ?? resumeOf?.task;
-  const ticket = opts.ticket ?? resumeOf?.ticket;
+  const ticket = opts.ticket ?? resumeOf?.ticket ?? undefined;
   if (resumeOf?.task && task !== resumeOf.task) die("resume keeps its task budget; start a new task deliberately");
   if (resumeOf?.ticket && ticket !== resumeOf.ticket) die("resume keeps its ticket retry count");
   const budgetArgs = { stateDir: STATE_DIR, task, ticket, retry: opts.retry === true, limits: caps };
