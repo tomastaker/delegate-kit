@@ -21,13 +21,13 @@ ok(){ if [ "$2" = "$3" ]; then echo "  ✔ $1"; PASS=$((PASS+1)); else echo "  �
 has(){ grep -q -- "$2" <<<"$1" && echo yes || echo no; }
 runs(){ ls "$DELEGATE_KIT_HOME/runs" 2>/dev/null | wc -l | tr -d ' '; }
 
-mkwriter(){ # id — живой внешний писатель
+mkwriter(){ # id [write=true] [cwd] — живой внешний воркер
   local d="$DELEGATE_KIT_HOME/runs/$1"; mkdir -p "$d"
   node -e '
-    const fs=require("fs");const[,d,id,pid]=process.argv;
-    fs.writeFileSync(d+"/meta.json",JSON.stringify({id,role:"implementer",backend:"codex",model:"gpt-5.6-sol",effort:"high",
-      cwd:"/tmp",write:true,status:"running",pid:Number(pid),started:new Date().toISOString(),finished:null,sessionId:null},null,2));
-  ' "$d" "$1" "$$"
+    const fs=require("fs");const[,d,id,pid,write,cwd]=process.argv;
+    fs.writeFileSync(d+"/meta.json",JSON.stringify({id,role:write === "true" ? "implementer" : "researcher",backend:"codex",model:"gpt-5.6-sol",effort:"high",
+      cwd,write:write === "true",status:"running",pid:Number(pid),started:new Date().toISOString(),finished:null,sessionId:null},null,2));
+  ' "$d" "$1" "$$" "${2:-true}" "${3:-/tmp}"
 }
 
 # Репозиторий с worktree'ями w1..w5 (agent-wt кладёт их рядом: <repo>.worktrees/<name>)
@@ -41,6 +41,20 @@ run(){ # cwd extra-args… — печатает stderr; код возврата 
   local cwd=$1; shift
   ERR=$(node "$AR" run --role implementer --backend codex --cwd "$cwd" --prompt x --no-route-hint "$@" 2>&1 >/dev/null); RC=$?
 }
+
+echo "── внешний писатель другого репозитория занимает общий writer slot"
+mkdir -p "$BASE/other-repo"; git -C "$BASE/other-repo" init -q
+mkwriter cross-repo true "$BASE/other-repo"
+ERR=$("$WT" lock w1 --max-writers 1 2>&1 >/dev/null); RC=$?
+ok "нативному писателю отказано" "$RC" "1"
+ok "назван общий writer cap" "$(has "$ERR" "max 1 concurrent writers")" "yes"
+mkwriter cross-repo false "$BASE/other-repo"
+ERR=$("$WT" lock w1 --max-writers 1 --max-workers 1 2>&1 >/dev/null); RC=$?
+ok "read-only внешний занимает worker slot" "$(has "$ERR" "max 1 active workers")" "yes"
+"$WT" lock w1 --max-writers 1 --max-workers 2 >/dev/null
+ok "read-only внешний не занимает writer slot" "$?" "0"
+"$WT" release w1 >/dev/null
+rm -f "$DELEGATE_KIT_HOME/runs/cross-repo/meta.json"; rmdir "$DELEGATE_KIT_HOME/runs/cross-repo"
 
 echo "── явный потолок: 2 внешних + 1 нативный = 3"
 mkwriter e1; mkwriter e2
@@ -104,16 +118,16 @@ ok "lifecycle=done" "$(node "$AR" status sup-1 | node -e 'let s="";process.stdin
 ok "причина в result" "$(has "$(cat "$DELEGATE_KIT_HOME/runs/sup-1/result.json")" "locked for a native subagent")" "yes"
 ok "list не падает" "$(node "$AR" list >/dev/null 2>&1 && echo ok)" "ok"
 
-echo "── agent-wt lock: тот же потолок по lock'ам репозитория"
+echo "── agent-wt lock: общий потолок внешних писателей и нативных lock'ов"
 "$WT" lock w2 >/dev/null; "$WT" lock w3 >/dev/null   # w1..w3 заняты
-ERR=$("$WT" lock w4 --max-writers 3 2>&1 >/dev/null); RC=$?
+ERR=$("$WT" lock w4 --max-writers 5 2>&1 >/dev/null); RC=$?
 ok "отказ" "$RC" "1"
-ok "назван потолок и занятые" "$(has "$ERR" "max 3 concurrent writers reached in this repository (w1 w2 w3)")" "yes"
+ok "назван потолок и общее число писателей" "$(has "$ERR" "max 5 concurrent writers reached (5 known writers)")" "yes"
 ok "нет lock'а на w4" "$("$WT" status w4 | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).lock))')" "unlocked"
-"$WT" lock w4 --max-writers 4 >/dev/null; ok "--max-writers 4 пускает" "$?" "0"
+"$WT" lock w4 --max-writers 6 >/dev/null; ok "--max-writers 6 пускает" "$?" "0"
 "$WT" lock w5 --max-writers 9 >/dev/null; ok "больше восьми разрешено" "$?" "0"
 "$WT" release w5 >/dev/null
-DELEGATE_KIT_MAX_WRITERS=5 "$WT" lock w5 >/dev/null; ok "env пускает" "$?" "0"
+DELEGATE_KIT_MAX_WRITERS=7 "$WT" lock w5 >/dev/null; ok "env пускает" "$?" "0"
 "$WT" release w5 >/dev/null
 ERR=$("$WT" lock w5 --max-workers 1 --max-writers 20 2>&1 >/dev/null); RC=$?
 ok "native max-workers не повышается под writer cap" "$RC" "1"
@@ -161,7 +175,16 @@ git -C "$BASE/repo" worktree add -q -b dk/elsewhere "$BASE/elsewhere" >/dev/null
 jq -n --arg pid "$$" '{id:"ext-1",role:"implementer",kind:"process",pid:($pid|tonumber),cwd:"x"}' > "$BASE/repo/.git/worktrees/elsewhere/delegate-kit.lock"
 ERR=$("$WT" lock w1 --max-writers 1 2>&1 >/dev/null); RC=$?
 ok "отказ: чужой worktree занят живым процессом" "$RC" "1"
-ok "он назван" "$(has "$ERR" "(elsewhere)")" "yes"
+ok "он посчитан" "$(has "$ERR" "(1 known writers)")" "yes"
+mkwriter ext-1 true x
+"$WT" lock w1 --max-writers 2 --max-workers 2 >/dev/null
+ok "meta и process-lock одного воркера считаются один раз" "$?" "0"
+"$WT" release w1 >/dev/null
+rm -f "$DELEGATE_KIT_HOME/runs/ext-1/meta.json"; rmdir "$DELEGATE_KIT_HOME/runs/ext-1"
+mkwriter reader false x
+ERR=$("$WT" lock w1 --max-writers 1 2>&1 >/dev/null)
+ok "read-only meta в том же cwd не скрывает process-lock писателя" "$(has "$ERR" "max 1 concurrent writers")" "yes"
+rm -f "$DELEGATE_KIT_HOME/runs/reader/meta.json"; rmdir "$DELEGATE_KIT_HOME/runs/reader"
 jq -n '{id:"ext-2",role:"implementer",kind:"process",pid:999999,cwd:"x"}' > "$BASE/repo/.git/worktrees/elsewhere/delegate-kit.lock"
 "$WT" lock w1 --max-writers 1 >/dev/null; ok "мёртвый process-lock не считается" "$?" "0"
 

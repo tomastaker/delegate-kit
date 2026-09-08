@@ -132,13 +132,15 @@ const alive = pid => { if (!Number.isInteger(pid) || pid < 1) return false; try 
 const entries = dir => { try { return fs.readdirSync(dir); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } };
 const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
 const runs = entries(path.join(stateDir, 'runs')).map(id => read(path.join(stateDir, 'runs', id, 'meta.json'))).filter(run => run && run.status === 'running' && alive(run.pid));
-let total = runs.length;
+const counts = { workers: runs.length, writers: runs.filter(run => run.write).length };
 for (const name of entries(path.join(common, 'worktrees'))) {
   const lock = read(path.join(common, 'worktrees', name, 'delegate-kit.lock'));
-  if (lock?.kind === 'native') total += 1;
-  else if (lock && alive(lock.pid) && !runs.some(run => run.id === lock.id || run.cwd === lock.cwd)) total += 1;
+  if (lock?.kind === 'native' || (lock && alive(lock.pid) && !runs.some(run => run.id === lock.id || (run.write && run.cwd === lock.cwd)))) {
+    counts.workers += 1;
+    counts.writers += 1;
+  }
 }
-console.log(total);
+console.log(JSON.stringify(counts));
 JS
 }
 # The count-then-lock window: eight concurrent `lock --max-writers 1` all counted zero and
@@ -154,19 +156,6 @@ acquire_caps_mutex() {
   done
   die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
 }
-# Every linked worktree of this checkout, not only the ones under wt_base_dir: an
-# `agent-run --cwd` writer may sit in any worktree, and its lock lives in the same place.
-locked_worktrees() {
-  local common; common="$(git rev-parse --git-common-dir)"; common="$(cd "$common" && pwd)"
-  [ -d "$common/worktrees" ] || return 0
-  local lf
-  for lf in "$common"/worktrees/*/delegate-kit.lock; do
-    [ -f "$lf" ] || continue
-    [[ "$(lock_state "$lf")" == locked* ]] && basename "$(dirname "$lf")"
-  done
-  return 0
-}
-
 cmd_lock() {
   local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
   local label="native-subagent"
@@ -186,13 +175,14 @@ cmd_lock() {
     [[ "$info" == locked* ]] && die "worktree is already $info; one writer per worktree"
     rm -f "$lf"   # stale process lock
   fi
-  local held; held=$(locked_worktrees | tr '\n' ' '); held=${held% }
-  local n=0; [ -n "$held" ] && n=$(wc -w <<<"$held" | tr -d ' ')
-  if [ -n "$cap" ] && [ "$n" -ge "$cap" ]; then
-    die "max $cap concurrent writers reached in this repository ($held). Adjust the explicit limit only when the task warrants it."
+  local counts workers writers
+  counts=$(known_workers) || die "cannot count active workers"
+  workers=$(jq -r '.workers' <<<"$counts")
+  writers=$(jq -r '.writers' <<<"$counts")
+  if [ -n "$cap" ] && [ "$writers" -ge "$cap" ]; then
+    die "max $cap concurrent writers reached ($writers known writers). Adjust the explicit limit only when the task warrants it."
   fi
   if [ -n "$workers_cap" ]; then
-    local workers; workers=$(known_workers) || die "cannot count active workers"
     [ "$workers" -lt "$workers_cap" ] || die "max $workers_cap active workers reached ($workers known workers)"
   fi
   jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
