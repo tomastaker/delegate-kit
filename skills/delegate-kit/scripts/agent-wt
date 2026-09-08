@@ -9,21 +9,27 @@ agent-wt create <name> [--base REF]   create worktree + branch dk/<name> (defaul
 agent-wt list                         list worktrees with lock/owner/status
 agent-wt status <name>                path, branch, lock, dirty files, commits ahead of base
 agent-wt diff <name> [--base REF]     frozen diff: base..HEAD plus uncommitted changes
-agent-wt lock <name> [--label TXT] [--max-writers N]
+agent-wt lock <name> [--label TXT] [--max-writers N] [--max-workers N]
                                       take the write-lock for a native subagent the parent spawns itself;
-                                      refuses past the writer cap (3 by default, ceiling 8; DELEGATE_KIT_MAX_WRITERS)
+                                      honours explicit flags, DELEGATE_KIT_MAX_* and config.limits; no default cap
 agent-wt release <name> [--force]     remove the write-lock (only if its process is gone or --force)
 agent-wt remove <name> [--force]      remove worktree and branch (refuses if locked or dirty unless --force)
 agent-wt cleanup                      remove worktrees whose branch is merged into the base and are unlocked
 EOF
 }
 
+SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
+STATE_DIR="${DELEGATE_KIT_HOME:-$HOME/.delegate-kit}"
 CAPS_MUTEX=""
-release_caps_mutex() { [ -n "$CAPS_MUTEX" ] && rm -rf "$CAPS_MUTEX"; CAPS_MUTEX=""; }
+GLOBAL_CAPS_MUTEX=""
+release_caps_mutex() {
+  [ -n "$CAPS_MUTEX" ] && rm -rf "$CAPS_MUTEX"; CAPS_MUTEX=""
+  [ -n "$GLOBAL_CAPS_MUTEX" ] && rm -f "$GLOBAL_CAPS_MUTEX"; GLOBAL_CAPS_MUTEX=""
+}
 trap release_caps_mutex EXIT
 die() { echo "agent-wt: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
-need git; need jq
+need git; need jq; need node
 
 repo_root() { git rev-parse --show-toplevel 2>/dev/null || die "not inside a git repository"; }
 main_root() {
@@ -104,16 +110,36 @@ cmd_diff() {
   (cd "$p" && git add -N . >/dev/null 2>&1 || true; git diff "$base")
 }
 
-# Writer cap, shared with agent-run: 3 by default, 8 at most. A native lock is a writer
-# the parent runs itself, so it counts like an external one. The count here is per
-# repository: every locked worktree of this checkout, native or live process.
-WRITERS_DEFAULT=3; WRITERS_CEILING=8
-writer_cap() {
-  local v="$1" from="$2"
-  [ -n "$v" ] || { echo "$WRITERS_DEFAULT"; return; }
-  [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -ge 1 ] || die "$from must be an integer from 1 to $WRITERS_CEILING (got $v)"
-  [ "$v" -le "$WRITERS_CEILING" ] || die "$from=$v is above the ceiling of $WRITERS_CEILING writers; the ceiling holds against every flag. Split the work into waves."
-  echo "$v"
+# Native writers share both mutexes with external starts: machine first, repo second.
+acquire_global_caps_mutex() {
+  mkdir -p "$STATE_DIR"
+  local file="$STATE_DIR/caps.lock" pid
+  for _ in $(seq 1 300); do
+    if (set -o noclobber; echo "$$" > "$file") 2>/dev/null; then GLOBAL_CAPS_MUTEX="$file"; return; fi
+    pid=$(cat "$file" 2>/dev/null || true)
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -f "$file"; continue; fi
+    sleep 0.05
+  done
+  die "another worker has held $file for 15s; verify the owner before removing a stale lock"
+}
+known_workers() {
+  local common; common=$(git rev-parse --git-common-dir); common=$(cd "$common" && pwd)
+  node --input-type=module - "$STATE_DIR" "$common" <<'JS'
+import fs from 'node:fs';
+import path from 'node:path';
+const [stateDir, common] = process.argv.slice(2);
+const alive = pid => { if (!Number.isInteger(pid) || pid < 1) return false; try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
+const entries = dir => { try { return fs.readdirSync(dir); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } };
+const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
+const runs = entries(path.join(stateDir, 'runs')).map(id => read(path.join(stateDir, 'runs', id, 'meta.json'))).filter(run => run && run.status === 'running' && alive(run.pid));
+let total = runs.length;
+for (const name of entries(path.join(common, 'worktrees'))) {
+  const lock = read(path.join(common, 'worktrees', name, 'delegate-kit.lock'));
+  if (lock?.kind === 'native') total += 1;
+  else if (lock && alive(lock.pid) && !runs.some(run => run.id === lock.id || run.cwd === lock.cwd)) total += 1;
+}
+console.log(total);
+JS
 }
 # The count-then-lock window: eight concurrent `lock --max-writers 1` all counted zero and
 # all succeeded. `mkdir` is atomic, so the directory is the mutex; a dead pid inside is stale.
@@ -123,7 +149,7 @@ acquire_caps_mutex() {
   for _ in $(seq 1 300); do
     if mkdir "$d" 2>/dev/null; then echo "$$" > "$d/pid"; CAPS_MUTEX="$d"; return; fi
     local pid; pid=$(cat "$d/pid" 2>/dev/null || true)
-    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
     sleep 0.05
   done
   die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
@@ -143,22 +169,31 @@ locked_worktrees() {
 
 cmd_lock() {
   local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
-  local label="native-subagent" cap_flag=""
-  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; --max-writers) cap_flag=${2:-}; [ -n "$cap_flag" ] || die "--max-writers needs a number"; shift 2;; *) die "unknown option $1";; esac; done
+  local label="native-subagent"
+  local limit_args=(--config "$STATE_DIR/config.json")
+  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; --max-writers|--max-workers) [ -n "${2:-}" ] || die "$1 needs a number"; limit_args+=("$1" "$2"); shift 2;; *) die "unknown option $1";; esac; done
   local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name (create it first)"
   local lf; lf=$(lock_file "$name")
+  local limits cap workers_cap
+  limits=$(node "$SCRIPTS/limits.mjs" "${limit_args[@]}") || die "invalid limits configuration"
+  cap=$(jq -r '.writers // empty' <<<"$limits")
+  workers_cap=$(jq -r '.workers // empty' <<<"$limits")
+  acquire_global_caps_mutex
+  acquire_caps_mutex
+  # Ownership must be checked under the mutex, including concurrent locks of one worktree.
   if [ -f "$lf" ]; then
     local info; info=$(lock_info "$name")
     [[ "$info" == locked* ]] && die "worktree is already $info; one writer per worktree"
     rm -f "$lf"   # stale process lock
   fi
-  local cap
-  if [ -n "$cap_flag" ]; then cap=$(writer_cap "$cap_flag" "--max-writers"); else cap=$(writer_cap "${DELEGATE_KIT_MAX_WRITERS:-}" "DELEGATE_KIT_MAX_WRITERS"); fi
-  acquire_caps_mutex
   local held; held=$(locked_worktrees | tr '\n' ' '); held=${held% }
   local n=0; [ -n "$held" ] && n=$(wc -w <<<"$held" | tr -d ' ')
-  if [ "$n" -ge "$cap" ]; then
-    die "max $cap concurrent writers reached in this repository ($held). Raising the cap is a per-task decision: state the partition — one ticket per writer, disjoint write scopes — get the user's yes, then --max-writers N (ceiling $WRITERS_CEILING) or DELEGATE_KIT_MAX_WRITERS for the session."
+  if [ -n "$cap" ] && [ "$n" -ge "$cap" ]; then
+    die "max $cap concurrent writers reached in this repository ($held). Adjust the explicit limit only when the task warrants it."
+  fi
+  if [ -n "$workers_cap" ]; then
+    local workers; workers=$(known_workers) || die "cannot count active workers"
+    [ "$workers" -lt "$workers_cap" ] || die "max $workers_cap active workers reached ($workers known workers)"
   fi
   jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '{id:$id,kind:"native",label:$label,role:"implementer",pid:null,cwd:$cwd,since:$since}' > "$lf"

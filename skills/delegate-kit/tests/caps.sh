@@ -15,7 +15,7 @@ BASE="${TMPDIR:-/tmp}/dk-caps-test.$$"
 trap 'rm -rf "$BASE"' EXIT
 export DELEGATE_KIT_HOME="$BASE/state"
 export DELEGATE_KIT_PARENT=claude
-unset DELEGATE_KIT_MAX_WRITERS DELEGATE_KIT_MAX_WORKERS
+unset DELEGATE_KIT_MAX_WRITERS DELEGATE_KIT_MAX_WORKERS DELEGATE_KIT_MAX_RUNS DELEGATE_KIT_MAX_RETRIES
 PASS=0; FAIL=0
 ok(){ if [ "$2" = "$3" ]; then echo "  ✔ $1"; PASS=$((PASS+1)); else echo "  ✘ $1: ожидалось [$3], получено [$2]"; FAIL=$((FAIL+1)); fi; }
 has(){ grep -q -- "$2" <<<"$1" && echo yes || echo no; }
@@ -42,18 +42,17 @@ run(){ # cwd extra-args… — печатает stderr; код возврата 
   ERR=$(node "$AR" run --role implementer --backend codex --cwd "$cwd" --prompt x --no-route-hint "$@" 2>&1 >/dev/null); RC=$?
 }
 
-echo "── потолок по умолчанию: 2 внешних + 1 нативный = 3"
+echo "── явный потолок: 2 внешних + 1 нативный = 3"
 mkwriter e1; mkwriter e2
 "$WT" lock w1 --label native-one >/dev/null
-run "$WTS/w2"
+run "$WTS/w2" --max-writers 3
 ok "отказ" "$RC" "1"
 ok "назван потолок 3" "$(has "$ERR" "max 3 concurrent writers")" "yes"
 ok "внешние посчитаны" "$(has "$ERR" "2 external: e1, e2")" "yes"
 ok "нативный lock посчитан" "$(has "$ERR" "1 native: w1")" "yes"
-ok "подсказан --max-writers" "$(has "$ERR" "--max-writers N")" "yes"
 
 echo "── тот же отказ при --detach виден, прогон не заводится (регрессия тихого провала)"
-run "$WTS/w2" --detach
+run "$WTS/w2" --max-writers 3 --detach
 ok "отказ" "$RC" "1"
 ok "причина напечатана" "$(has "$ERR" "max 3 concurrent writers")" "yes"
 ok "новых прогонов нет" "$(runs)" "2"
@@ -73,25 +72,27 @@ echo "── DELEGATE_KIT_MAX_WRITERS делает то же на сессию"
 DELEGATE_KIT_MAX_WRITERS=4 run "$WTS/w1"
 ok "потолок пройден" "$(has "$ERR" "concurrent writers")" "no"
 
-echo "── жёсткий потолок 8"
-run "$WTS/w2" --max-writers 9
+echo "── нет произвольного потолка 8; занятый worktree остаётся защищён"
+run "$WTS/w1" --max-writers 9
 ok "отказ" "$RC" "1"
-ok "назван потолок" "$(has "$ERR" "above the ceiling of 8")" "yes"
-DELEGATE_KIT_MAX_WRITERS=9 run "$WTS/w2"
-ok "env тоже не пересекает" "$(has "$ERR" "above the ceiling of 8")" "yes"
+ok "9 разрешено, отказ по владению" "$(has "$ERR" "locked for a native subagent")" "yes"
+DELEGATE_KIT_MAX_WRITERS=20 run "$WTS/w1"
+ok "env допускает 20" "$(has "$ERR" "locked for a native subagent")" "yes"
+run "$WTS/w1"
+ok "без явного ограничения нет cap 3" "$(has "$ERR" "locked for a native subagent")" "yes"
 run "$WTS/w2" --max-writers
 ok "флаг без числа" "$(has "$ERR" "must be an integer")" "yes"
 run "$WTS/w2" --max-writers abc
 ok "не число" "$(has "$ERR" "must be an integer")" "yes"
 
-echo "── воркеров всего = писатели + 3, DELEGATE_KIT_MAX_WORKERS не ниже писателей + 1"
+echo "── max-workers независим от writer cap и не повышается автоматически"
 for i in 3 4 5 6; do mkwriter "r$i"; done   # 6 внешних прогонов
-run "$WTS/w2" --max-writers 8
-ok "8 + 3 = 11: воркеров хватает, упёрлись не в них" "$(has "$ERR" "active workers")" "no"
-DELEGATE_KIT_MAX_WORKERS=1 run "$WTS/w2" --max-writers 8
-ok "поднято до писателей + 1 = 9" "$(has "$ERR" "active workers")" "no"
-run "$WTS/w2" --max-writers 3
-ok "3 + 3 = 6 занято: отказ по воркерам" "$(has "$ERR" "max 6 active workers")" "yes"
+run "$WTS/w1" --max-writers 8
+ok "без max-workers нет производного потолка" "$(has "$ERR" "locked for a native subagent")" "yes"
+DELEGATE_KIT_MAX_WORKERS=1 run "$WTS/w1" --max-writers 8
+ok "env 1 остаётся жёстким ограничением" "$(has "$ERR" "max 1 active workers")" "yes"
+run "$WTS/w1" --max-writers 8 --max-workers 6
+ok "явный max-workers 6" "$(has "$ERR" "max 6 active workers")" "yes"
 for i in 3 4 5 6; do rm -rf "$DELEGATE_KIT_HOME/runs/r$i"; done
 
 echo "── отказ внутри супервизора оставляет meta со статусом failed"
@@ -105,19 +106,24 @@ ok "list не падает" "$(node "$AR" list >/dev/null 2>&1 && echo ok)" "ok"
 
 echo "── agent-wt lock: тот же потолок по lock'ам репозитория"
 "$WT" lock w2 >/dev/null; "$WT" lock w3 >/dev/null   # w1..w3 заняты
-ERR=$("$WT" lock w4 2>&1 >/dev/null); RC=$?
+ERR=$("$WT" lock w4 --max-writers 3 2>&1 >/dev/null); RC=$?
 ok "отказ" "$RC" "1"
 ok "назван потолок и занятые" "$(has "$ERR" "max 3 concurrent writers reached in this repository (w1 w2 w3)")" "yes"
 ok "нет lock'а на w4" "$("$WT" status w4 | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).lock))')" "unlocked"
 "$WT" lock w4 --max-writers 4 >/dev/null; ok "--max-writers 4 пускает" "$?" "0"
-ERR=$("$WT" lock w5 --max-writers 9 2>&1 >/dev/null)
-ok "жёсткий потолок" "$(has "$ERR" "above the ceiling of 8")" "yes"
+"$WT" lock w5 --max-writers 9 >/dev/null; ok "больше восьми разрешено" "$?" "0"
+"$WT" release w5 >/dev/null
 DELEGATE_KIT_MAX_WRITERS=5 "$WT" lock w5 >/dev/null; ok "env пускает" "$?" "0"
+"$WT" release w5 >/dev/null
+ERR=$("$WT" lock w5 --max-workers 1 --max-writers 20 2>&1 >/dev/null); RC=$?
+ok "native max-workers не повышается под writer cap" "$RC" "1"
+ok "назван worker cap" "$(has "$ERR" "max 1 active workers")" "yes"
+"$WT" lock w5 --max-workers 7 >/dev/null; ok "2 внешних + 4 нативных оставляют один слот" "$?" "0"
 ERR=$("$WT" lock w5 --max-writers 2>&1 >/dev/null)
 ok "флаг без числа" "$(has "$ERR" "needs a number")" "yes"
 
 echo "── нативные lock'и входят и в общий счёт воркеров (read-only прогон)"
-ERR=$(node "$AR" run --role researcher --backend codex --cwd "$BASE/repo" --prompt x --no-route-hint 2>&1 >/dev/null); RC=$?
+ERR=$(node "$AR" run --role researcher --backend codex --cwd "$BASE/repo" --prompt x --max-workers 6 --no-route-hint 2>&1 >/dev/null); RC=$?
 ok "2 внешних + 5 нативных ≥ 6: отказ" "$RC" "1"
 ok "названы оба вида" "$(has "$ERR" "max 6 active workers reached (2 external: e1, e2; 5 native: w1, w2, w3, w4, w5)")" "yes"
 
@@ -132,6 +138,11 @@ for w in w6 w7 w8; do "$WT" create "$w" >/dev/null 2>&1; done
 for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" lock "$w" --max-writers 1 >/dev/null 2>&1 & done; wait
 ok "занят один worktree" "$("$WT" list | jq '[.[] | select(.lock | startswith("locked"))] | length')" "1"
 ok "мьютекс отпущен" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "free"
+
+echo "── гонка: повторный захват одного worktree не меняет владельца"
+for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" release "$w" >/dev/null 2>&1; done
+for i in 1 2 3 4 5 6 7 8; do ("$WT" lock w1 --label "owner-$i" >/dev/null 2>&1 && touch "$BASE/won-$i") & done; wait
+ok "один успешный владелец" "$(find "$BASE" -name 'won-*' | wc -l | tr -d ' ')" "1"
 
 echo "── брошенные мьютексы с мёртвым pid не блокируют"
 for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" release "$w" >/dev/null 2>&1; done
@@ -153,6 +164,21 @@ ok "отказ: чужой worktree занят живым процессом" "$
 ok "он назван" "$(has "$ERR" "(elsewhere)")" "yes"
 jq -n '{id:"ext-2",role:"implementer",kind:"process",pid:999999,cwd:"x"}' > "$BASE/repo/.git/worktrees/elsewhere/delegate-kit.lock"
 "$WT" lock w1 --max-writers 1 >/dev/null; ok "мёртвый process-lock не считается" "$?" "0"
+
+echo "── agent-wt читает config.limits; флаг выше по приоритету"
+echo '{"limits":{"max_writers":1}}' > "$DELEGATE_KIT_HOME/config.json"
+ERR=$("$WT" lock w2 2>&1 >/dev/null); RC=$?
+ok "config writer cap отклоняет второй lock" "$RC" "1"
+ok "назван лимит из config" "$(has "$ERR" "max 1 concurrent writers")" "yes"
+"$WT" lock w2 --max-writers 2 >/dev/null; ok "флаг переопределяет config" "$?" "0"
+"$WT" release w2 >/dev/null
+echo '{"limits":{"max_workers":1}}' > "$DELEGATE_KIT_HOME/config.json"
+ERR=$("$WT" lock w2 2>&1 >/dev/null)
+ok "config worker cap" "$(has "$ERR" "max 1 active workers")" "yes"
+echo '{"limits":{"max_workers":0}}' > "$DELEGATE_KIT_HOME/config.json"
+ERR=$("$WT" lock w2 --max-workers 20 2>&1 >/dev/null); RC=$?
+ok "невалидный config не скрывается флагом" "$RC" "1"
+rm -f "$DELEGATE_KIT_HOME/config.json"
 
 echo; echo "Пройдено: $PASS, провалено: $FAIL"
 exit $((FAIL > 0))
