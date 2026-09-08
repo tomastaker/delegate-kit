@@ -46,7 +46,10 @@ test('README JSON examples are valid configuration fragments and local assets/li
 
 function withConfig(run) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-profile-command-'));
-  const env = { ...process.env, DELEGATE_KIT_HOME: home, DELEGATE_KIT_PRESET: 'auto' };
+  const bin = path.join(home, 'bin'); fs.mkdirSync(bin);
+  // Routing probes availability; isolate it from locally installed provider CLIs.
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+  const env = { ...process.env, PATH: bin, DELEGATE_KIT_HOME: home, DELEGATE_KIT_PRESET: 'auto' };
   delete env.DELEGATE_KIT_MODE;
   const command = args => spawnSync(process.execPath, [path.join(skill, 'scripts/agent-run'), ...args], { env, encoding: 'utf8' });
   try { fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify(example)); run(command, home); }
@@ -80,6 +83,7 @@ test('legacy solo preset survives materialized external arguments', () => withCo
   assert.equal(routed.status, 0, routed.stderr);
   const first = JSON.parse(routed.stdout);
   assert.equal(first.family, 'claude'); assert.equal(first.mode, 'solo');
+  assert.equal(first.available, true);
   const second = command(['route', ...first.invoke.argv.slice(2)]);
   assert.equal(second.status, 0, second.stderr);
   const result = JSON.parse(second.stdout);
