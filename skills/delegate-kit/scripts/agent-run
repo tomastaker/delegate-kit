@@ -524,14 +524,18 @@ function cmdNotify(argv) {
 }
 
 function resolveRoute(opts = {}) {
-  const route = resolve(opts, config());
+  const cfg = config();
+  const table = backendTable(cfg);
+  const route = resolve(opts, cfg);
   const invocation = ["agent-run", "run", "--role", route.role,
     "--family", route.family, "--runner", route.external_adapter || route.adapter];
-  if (route.backend && Object.hasOwn(backendTable(config()), route.backend)) invocation.push("--backend", route.backend);
+  if (route.backend && Object.hasOwn(table, route.backend)) invocation.push("--backend", route.backend);
   if (route.parent) invocation.push("--parent", route.parent);
   if (route.profile) invocation.push("--profile", route.profile);
   if (route.level) invocation.push("--level", String(route.level));
   if (opts.families) invocation.push("--families", String(opts.families));
+  else if (route.allowed_families.every(family => route.allowed_backends.some(id => table[id]?.family === family)))
+    invocation.push("--families", route.allowed_backends.join(","));
   if (opts.mode) invocation.push("--mode", String(opts.mode));
   if (route.model) invocation.push("--model", route.model);
   if (route.effort) invocation.push("--effort", route.effort);

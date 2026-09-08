@@ -71,3 +71,32 @@ test('external run refuses a required native candidate before creating a worker'
   assert.match(result.stderr, /native/i);
   assert.deepEqual(fs.readdirSync(path.join(home, 'runs')), []);
 }));
+
+
+test('legacy solo preset survives materialized external arguments', () => withConfig((command, home) => {
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ preset: 'main-claude', mode: 'solo' }));
+  // withConfig pins env preset auto; pass the user's explicit legacy selection.
+  const routed = command(['route', '--parent', 'codex', '--role', 'planner', '--preset', 'main-claude']);
+  assert.equal(routed.status, 0, routed.stderr);
+  const first = JSON.parse(routed.stdout);
+  assert.equal(first.family, 'claude'); assert.equal(first.mode, 'solo');
+  const second = command(['route', ...first.invoke.argv.slice(2)]);
+  assert.equal(second.status, 0, second.stderr);
+  const result = JSON.parse(second.stdout);
+  assert.equal(result.family, 'claude'); assert.equal(result.mode, 'solo');
+}));
+
+test('custom external family roundtrip does not invent a legacy backend pool', () => withConfig((command, home) => {
+  fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ profiles: { gpt: { roles: { planner: [
+    { family: 'custom', runner: 'opencode', model: 'chosen/provider-model' }
+  ] } } } }));
+  const routed = command(['route', '--parent', 'codex', '--role', 'planner']);
+  assert.equal(routed.status, 0, routed.stderr);
+  const first = JSON.parse(routed.stdout);
+  assert.ok(!first.invoke.argv.includes('--families'));
+  const second = command(['route', ...first.invoke.argv.slice(2)]);
+  assert.equal(second.status, 0, second.stderr);
+  const result = JSON.parse(second.stdout);
+  assert.equal(result.family, 'custom'); assert.equal(result.adapter, 'opencode');
+  assert.equal(result.model, 'chosen/provider-model');
+}));
