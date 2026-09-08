@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-const skill = new URL('..', import.meta.url).pathname;
+const skill = fileURLToPath(new URL('..', import.meta.url));
 const installer = path.join(skill, 'hooks/native-agents.mjs');
 const invoke = (action, home, dry = '0') => spawnSync(process.execPath, [installer, action, skill, home, dry], { encoding: 'utf8' });
 test('native install removes legacy pins, preserves user config, is idempotent and reversible', () => {

@@ -1,82 +1,75 @@
 ---
 name: delegate-kit
-description: Choose when and how to delegate repository work, isolate writers, and verify changes through fresh-context review. Use for scoped features, refactors across modules, delegation requests, implementation plans, and second opinions. Works with one or two model families; supports native workers and documented CLI adapters.
+description: Coordinate repository work through scoped researchers, planners, implementers and fresh reviewers. Use for features, refactors, implementation plans, delegation and second opinions. Select role ladders for the current coordinator and mix supported native and external workers.
 license: MIT
 ---
 
 # delegate-kit
 
-The current session is the coordinator. It owns user intent, decomposition, briefs, integration, verification and reporting. Workers receive bounded tasks and do not delegate further.
+The current chat is the coordinator. Own user intent, decomposition, briefs, acceptance, integration and reporting. Delegate bounded outcomes to workers; delegation depth is one.
 
-## 1. Shape
+## 1. Decide what benefits from delegation
 
-Choose the first applicable shape. Small work stays in the current session.
+Compare a worker's useful independent work and potential parallel progress with briefing, repeated context, verification and likely repairs. Use task knowledge and observed results; pricing searches and hypothetical token bills are unnecessary. File count alone does not determine task size.
 
-| Shape | When | Who |
-|---|---|---|
-| DIRECT | Clear work in roughly 3 files; explanation or diagnosis; destructive or production-adjacent work | coordinator |
-| SCOUT | Finding relevant code or primary sources is the independent outcome | one read-only worker, then reassess |
-| PLAN | Ambiguous business rules, several modules, or a large change needing decomposition | senior planner, unless the coordinator already has a sufficient plan |
-| SINGLE | One well-specified vertical slice too large for DIRECT | one writer in a worktree |
-| PARALLEL | Independent outcomes with disjoint write scopes and stable interfaces | one writer per outcome |
-| SEQUENTIAL | A result changes the assumptions of the next task | one worker at a time |
+| Shape | Use when |
+|---|---|
+| DIRECT | Completing the work in existing context costs less than briefing and checking a worker; or the action must stay with the coordinator under the user's permissions |
+| SCOUT | Locating facts, relevant code or primary sources is a bounded independent outcome |
+| PLAN | A separate planner can resolve meaningful ambiguity, interacting constraints or decomposition; skip a redundant plan |
+| SINGLE | One substantial, specified outcome has one writer |
+| PARALLEL | Ready tasks have independent outcomes, disjoint write scopes and stable interfaces |
+| SEQUENTIAL | One result changes the next task's assumptions |
 
-State the shape and why, except for obvious DIRECT work. Coupled edits stay with one owner. Default writer cap 3, ceiling 8; total workers = writers + 3. Raising the cap requires the user's permission and a file ownership partition. Delegation depth is 1.
+State the shape and reason for substantial work. Choose worker count from ready outcomes and integration capacity, within actual host limits and explicit user limits. Reassess after results; neither a fixed number of workers nor maximum fan-out is a target. Coupled edits have one owner.
 
-## 2. Establish available executors
+## 2. Select the coordinator's role profile
 
-Read `references/routing.md` before the first dispatch. Use the current session's actual tools, model picker/catalog and permissions. `agent-run doctor` lists installed adapters without calling models; installation alone does not prove authentication or model access.
+Before dispatch, read `references/routing.md`. Personal assignments live in `~/.delegate-kit/config.json`: `profiles.gpt`, `profiles.claude`, `profiles.kimi`, or another declared coordinator family. The profile selects workers; it never replaces the chat's model. An explicit session instruction overrides saved choices.
 
-No JSON is required. Use the current family; add a second only when authorized and available. `auto` resolves to `solo` for one family and `duo` for two. Each family may contain multiple selectable models.
+Each role is an ordered ladder: level 1 is the usual choice; later levels are permitted alternatives for harder work. Use the appropriate level immediately when risk or ambiguity justifies it. Choose models from the user's configured ladder and actual host/provider capabilities, not vendor rankings. With no assignment, inherit the current model and disclose unavailable choices.
 
-**Quality-first defaults:** use the main senior model for implementation, planning, review and adjudication. For simpler work, reduce supported reasoning effort before changing model tier. Small and mid-tier workers are exceptions for bounded source extraction or fast lookup with independently checkable output. They do not implement or certify changes by default. A request for a recommendation, architectural judgement or diagnosis is not extraction. User-specified assignments override these defaults.
-
-Choose reasoning for risk and ambiguity, not just diff size: low/normal for straightforward work, high/deep for complex reasoning. Pass only values supported by the selected model and host; names are not portable across providers. If no alternative is established, inherit the current model. If that model's seniority is unknown, say so rather than inventing a ranking. `references/roles.md` describes role-specific decisions.
-
-## 3. Spec and route
-
-Use the user's accepted requirements and repository-defined spec/tickets. For multi-slice work, record scope, dependencies and acceptance criteria in `.scratch/<task>/`; existing tickets are the source of progress. Do not overwrite unfinished plans.
-
-For each role, decide the executor from the task and allowed pool, then resolve the concrete invocation:
+Resolve each selected role and level:
 
 ```
-agent-run route --role planner --parent codex
-agent-run route --role reviewer --parent codex --families codex,claude --author-backend self
+agent-run route --parent codex --role implementer --level 1
+agent-run route --parent codex --role reviewer --level 2 --author-backend self
 ```
 
-Pass `--backend`, `--model` and `--effort` for deliberate choices; retain the reason. Hard JSON role assignments are binding unless the user overrides them; preferences guide selection. Avoid overriding hard assignments with an autonomous flag. The route reports the source of selection, supported transport, required fresh context and family diversity separately.
+Native means the host can launch that worker. External means a supported CLI executes it. Check the actual tool schema, model identifiers and supported effort. `doctor` only detects installed CLIs. A configured target that is unavailable stays visible; choose another authorized candidate deliberately. Native dispatch: `references/hosts.md`. Before a new external CLI/model combination, read `references/providers.md`, installed help and `references/external.md`.
 
-Native dispatch: `references/hosts.md`. External dispatch and resume: `references/external.md`. Before using a new CLI/model combination, read the relevant adapter contract and official links in `references/providers.md` and inspect the installed CLI's help. Check its actual model and effort capabilities.
+## 3. Brief and dispatch
 
-## 4. Brief and isolation
+For work spanning several outcomes, record scope, dependencies, status and acceptance checks in existing tickets or `.scratch/<task>/`. Ready tasks have accepted dependencies. Preserve unfinished plans. A planner returns decomposition; the coordinator accepts or revises it before assigning work.
 
-Use `references/brief-template.md`: outcome, scope, spec, acceptance commands and required result. A stranger with only the repository must be able to start.
+Use `references/brief-template.md`: outcome, constraints, ownership and acceptance commands. Give enough detail to remove consequential ambiguity while leaving local implementation choices to the worker. A stranger with only the brief and repository must be able to begin.
 
-Every writer gets a worktree: `agent-wt create <task>`. Native writer: take `agent-wt lock <task>` and pass the absolute path. External writer: `--cwd <worktree>` takes the lock. One writer per worktree. Worktrees branch from HEAD: account for relevant uncommitted work before delegating; preserve other changes.
+Every writer gets an isolated worktree and one owner. `agent-wt create <task>` branches from HEAD; account for relevant uncommitted changes first. Native writers need `agent-wt lock <task>` and the absolute path. External writers take the lock through `--cwd`. Preserve other people's edits.
 
-Workers return the object in `references/result-schema.json`. A blocked worker returns precise questions; the coordinator resolves them and resumes the same worker when useful.
+Set a shared task ID for native and external runs. Track starts and retries with the lightweight budget counter described in `references/routing.md`; include each native dispatch and resume. External `run`/`resume` records its own start. Review total starts, retries and useful progress before another wave. Explicit user limits are hard; otherwise the coordinator decides whether the next call remains worthwhile.
 
-## 5. Review
+## 4. Accept, clarify or strengthen
 
-Review any delegated implementation, risk-zone change, or coordinator-written change over roughly 50 lines. Freeze the diff and provide the spec to a **fresh read-only agent**, including in solo mode. Do not preload the author's reasoning as proof. A separate family can add diversity; it is not a guarantee of independent errors.
+Inspect the returned evidence and run the relevant acceptance checks. A worker's done status does not establish completion. Workers return `references/result-schema.json`; report checks excluded by their adapter and run them in an authorized workspace.
 
-```
-agent-wt diff <task> > review.diff
-agent-run route --role reviewer --parent codex --author-backend self --diff review.diff
-```
+- Missing context, an imprecise brief or a bounded oversight: clarify and resume the same worker when its context remains useful.
+- Insufficient reasoning or repeated substantive mistakes: choose a stronger configured level and start a fresh worker with the task, prior result, current diff and remaining checks.
+- Missing tools, access or environment: address that obstacle; a stronger model does not supply access.
 
-Choose a capable reviewer according to task risk and known model strengths. In duo mode, prefer another family when otherwise comparable; a same-family reviewer remains valid. `single` is the default. For large, ambiguous or risky changes, consider complementary reviewers. Use diff thresholds as a proposal, not proof that more agents help. `panel` and `led` require user approval or an existing `review.allow_multiple` grant. Solo can use multiple fresh reviewers too. `references/review.md` defines lenses and reconciliation.
+A ladder is not an automatic retry loop. Reassess expected benefit before every retry; stop or report a blocker when another attempt is unlikely to help. Before replacing a writer, inspect partial work and ensure the previous writer has stopped and released ownership. Resume preserves model/effort; a changed choice is a fresh run.
 
-Verify disputed findings with a command first. Fix mechanical findings directly; substantive fixes return to the implementer, or a fresh writer when the earlier context is long or stale. Give it the diff, findings and prior summary. After a behavior-changing fix, rerun affected checks and ask the same reviewer to inspect the new hunks and finding dispositions. If resume is unavailable, brief a fresh reviewer explicitly.
+## 5. Review and integrate
 
-## 6. Integrate and report
+Review delegated implementation, risk-zone changes and substantial coordinator-written changes with a fresh read-only agent given the frozen diff and spec. Fresh context is required in every family. Family diversity is a separate choice; configured reviewer assignments govern it.
 
-Inspect results and run the acceptance commands before declaring completion. A worker's done status is evidence, not certification. Run checks excluded by a read-only adapter in the coordinator's authorized workspace. Report those limits.
+Choose review reasoning for contract complexity and risk, not only diff length. One reviewer is sufficient when it covers the risk; complementary reviewers may run independently when useful within user limits. `references/review.md` defines lenses, proposals and reconciliation. Reviewers do not receive each other's findings before reporting.
 
-Integrate and publish according to user authorization and repository conventions. Release/remove worktrees only after preserving accepted work. Update ticket status after acceptance checks pass.
+Reproduce disputed findings with commands first. Use a verifier for unresolved judgement. Clarify or strengthen the fix worker as in step 4. After behavior-changing fixes, rerun affected checks and resume the reviewer with new hunks and finding dispositions; use a fresh brief if resume is unavailable.
 
-Report what changed, checks actually run, unverified behavior, remaining steps, mode, selected models and selection sources. Report actual model only when confirmed by runtime metadata; otherwise label it unknown. Report fresh context and family diversity separately. Finish with closed X of Y and the next unfinished item when tickets exist.
+Integrate and publish within user authorization and repository conventions. Mark tickets accepted only after checks pass. Release/remove worktrees after preserving accepted changes.
 
-## 7. Handoff
+## 6. Report and hand off
 
-For an ownership transfer, write `.scratch/handoff/<date>-<task>.md` with state, blockers, decisions and pointers to specs, tickets and diffs. No secrets.
+Report changed behavior, actual checks, remaining limits, selected profile/role levels and native versus external execution. Confirm actual model only from runtime evidence; otherwise distinguish requested model from unknown identity. Report fresh context separately from family diversity. For tickets, close with completed X of Y and the next unfinished item.
+
+For ownership transfer, write `.scratch/handoff/<date>-<task>.md` with state, decisions, blockers and pointers to specs, tickets and diffs. Include task counter ID and remaining user limits. No secrets.

@@ -2,7 +2,7 @@
 
 An external worker is a CLI process launched once from a complete brief. It may belong to the same family as the coordinator. Native versus external describes transport, not model lineage.
 
-Read the relevant adapter in `providers.md` before first use. Confirm the CLI and configured model are available; `doctor` only detects executable presence. Model names, authentication and reasoning capabilities come from the host/provider. Do not read credential values into prompts or reports.
+Resolve the active coordinator profile and role level per `routing.md`. Read the relevant adapter in `providers.md` before first use. Confirm the CLI and configured model are available; `doctor` only detects executable presence. Model names, authentication and reasoning capabilities come from the host/provider. Do not read credential values into prompts or reports.
 
 ```
 agent-run run --role implementer --backend codex --cwd ../repo.worktrees/task --brief brief.md --detach
@@ -29,7 +29,7 @@ Every writer has one worktree and one lock. `agent-run --cwd` locks it automatic
 
 Read-only capability depends on the adapter. Some omit shell tools completely; the coordinator performs acceptance commands in its own authorized environment. See providers.md for the exact boundary. A worktree is write coordination, not a security sandbox.
 
-Default cap: 3 writers, maximum 8, total workers = writers + 3. More writers need a user-approved ownership partition. The run counts external writers machine-wide plus native locks in its repository. Concurrent starts reserve slots under a mutex; a refusal before or during detached startup is reported.
+Concurrency is bounded by explicit user limits and actual host capacity. The run counts external processes machine-wide plus native writer locks in its repository. Concurrent starts reserve slots under a mutex. Supply one --task ID and --ticket ID across related attempts; run/resume records each start in the task counter. Mark repairs with --retry. Limits and native accounting are defined in routing.md; a refusal before or during detached startup is reported.
 
 Delegation depth is 1. Native definitions carry no delegation tool; external adapters disable it through host controls where available, and the brief forbids further delegation. Worker shell subprocesses carry DELEGATE_KIT_DEPTH, so nested agent-run calls fail.
 
