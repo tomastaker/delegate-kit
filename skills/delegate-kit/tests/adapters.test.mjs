@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { inspectPermissions, narrowPermissions, mergeInline } from '../scripts/opencode-permissions.mjs';
 import { buildCommand, extractResult } from '../scripts/adapters.mjs';
-const skillDir = new URL('..', import.meta.url).pathname;
+const skillDir = fileURLToPath(new URL('..', import.meta.url));
 const schema = JSON.parse(fs.readFileSync(path.join(skillDir, 'references/result-schema.json')));
 const done = { status: 'done', summary: 'Checked', changes: [], checks_run: [], not_verified: [], plan: [], findings: [], questions: [], sources: [], next_steps: [] };
 const build = (adapter, extra = {}) => buildCommand({ adapter, model: null, effort: null, prompt: 'task', write: false, skillDir, ...extra });

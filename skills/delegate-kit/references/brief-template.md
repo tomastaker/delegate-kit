@@ -1,6 +1,6 @@
 # Brief template
 
-Keep it under ~40 lines. The worker reads the code itself; your job is to remove ambiguity, not to narrate the repository.
+Include the shared task ID and ticket ID for start/retry accounting. Keep it under ~40 lines. The worker reads the code itself; your job is to remove ambiguity, not to narrate the repository.
 
 The same brief serves both dispatch paths: `--brief` for an external `agent-run` worker, or the prompt body for a native subagent. Do not restate the role in it — the role preamble comes from `agent-run` or from the installed `dk-*` definition. Stage spec/diff files within the permitted directory, or include their contents in the brief, when the adapter denies external-directory reads. Shell checks excluded by the adapter belong to the coordinator.
 
@@ -55,3 +55,5 @@ The delegate-kit result JSON. If anything is ambiguous, return `status: blocked`
 **verifier**: "Finding: <text>. Counter-argument: <text>. Return `findings[0].verdict` as `confirmed`, `refuted` or `needs-human` with evidence."
 
 **researcher**: "Primary sources only. Every claim with URL and date. Mark anything you could not open as UNVERIFIED. Return `summary` and `sources`."
+
+**Strengthened replacement:** give the accepted task, current worktree/diff, previous result, concrete failure and remaining checks. Name the selected profile/role level and why it changed. Confirm the old writer has stopped and ownership is released. Count this start as a retry of the same ticket.

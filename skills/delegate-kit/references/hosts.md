@@ -9,7 +9,7 @@ Native means the current host can launch and supervise a separate agent. It does
 | Other hosts | Their actual dispatch tool, if available | Brief carries the role instructions |
 | No native fan-out | Supported external CLI, or coordinator executes serially | No simulated subagent or fresh-context claim |
 
-Omit model and effort to inherit. If the host permits explicit choices, use the verified model catalog and supported reasoning values. A pinned custom role can override a spawn choice; install updated role definitions before relying on inheritance. Native interfaces can differ from CLI configuration interfaces; if a setting cannot be applied natively, use a supported external adapter or retain the host setting and disclose the limit.
+Select the coordinator profile and role level per `routing.md`; a native worker may use any model the host actually supports. Record each start/resume with `agent-run budget --task ID --record --ticket ID`, adding `--retry` for repair attempts. Omit model and effort to inherit. If the host permits explicit choices, use the verified model catalog and supported reasoning values. A pinned custom role can override a spawn choice; install updated role definitions before relying on inheritance. Native interfaces can differ from CLI configuration interfaces; if a setting cannot be applied natively, use a supported external adapter or retain the host setting and disclose the limit.
 
 Review starts in a fresh context, not a fork containing the author's entire reasoning. Provide spec, frozen diff, relevant files and acceptance criteria. A same-family reviewer is a full review with no family diversity; both properties are reported separately.
 

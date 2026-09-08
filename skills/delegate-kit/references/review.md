@@ -6,7 +6,7 @@ How many reviewers a diff deserves, which angle each one takes, and how their fi
 
 Every review uses a fresh read-only agent and a frozen diff/spec. This applies equally in solo and duo. Family diversity is a separate property, not a binary label for whether a review counts.
 
-In duo, prefer another capable family when otherwise comparable. User assignments and known task suitability can select the author's family. A second slot should add a complementary lens and independently gathered evidence, rather than merely endorsing the first reviewer. It can belong to the same family in solo.
+When several families are allowed, consider another capable family when otherwise comparable. User assignments and known task suitability can select the author's family. A second slot should add a complementary lens and independently gathered evidence, rather than merely endorsing the first reviewer. It can belong to the same family in solo.
 
 Slots use correctness, spec and standards priorities. The coordinator can choose a different composition when justified by the task; state the reason. A hard reviewer backend assignment applies to every slot. See routing.md for mode boundaries and preferences.
 
@@ -22,7 +22,9 @@ A **mechanical** diff (formatting, lockfile bump, generated client) is always `s
 
 The thresholds are starting points. The ledger records `lens` and `panel` per run: after a few panels, look at how many findings slot B raised that A did not and how many of those survived verification. If B keeps returning one low-severity nit per panel, raise the thresholds.
 
-**A panel requires permission.** A standing `review.allow_multiple` grant or explicit user request can supply it; otherwise propose it. More than one session on one review is a cost the user decides on. `route` prints the numbers (`lines`, `files`, `modules`, `risk_zones`, `cost_note`); put them in the proposal and wait for the yes. `--depth` records that permission; the coordinator must not use it to grant itself permission.
+The coordinator chooses useful coverage within the user's limits and the host's capacity. Thresholds propose a review shape, not mandatory fan-out. `review.allow_multiple: false` is an explicit user restriction; request an exception or use one reviewer. An explicit user-selected `--depth` can record that exception. Count every review start/resume in the task budget.
+
+The reviewer model ladder and review depth are separate: a stronger single reviewer may be appropriate for a small risky change, while a large mechanical diff need not use the highest level. Configured reviewer assignments apply to all generated slots. For deliberate cross-family slots, resolve each authorized candidate separately and provide independent briefs.
 
 ## Lenses
 
@@ -62,9 +64,9 @@ Four structural checks sit alongside the smells, adapted from addyosmani/agent-s
 
 ## The lead
 
-At `led` depth the **review lead** (`dk-review-lead`; main senior model selected for planning) is called twice, and both calls are short because it reads *around* the diff, not through it:
+At `led` depth the **review lead** (`dk-review-lead`; planner ladder unless separately configured) is called twice, and both calls are short because it reads *around* the diff, not through it:
 
-1. **Before** — spec plus diff stat in, `plan` out: one reviewer per step with lens, files to concentrate on, exclusions, and the brief text. The brief is the most consequential artifact of the whole review, which is why the strongest model writes it.
+1. **Before** — spec plus diff stat in, `plan` out: one reviewer per step with lens, files to concentrate on, exclusions, and the brief text. The brief is the most consequential artifact of the whole review, so choose the planning level for the ambiguity and risk.
 2. **After** — the reviewers' result JSONs in, one merged `findings` list out, by the rules below.
 
 At `panel` depth the parent does both jobs itself with the same rules; the lead exists for the size at which the parent would otherwise be reading three reports into its own context.
@@ -81,4 +83,4 @@ Reviewers run **in parallel and blind to each other**. A reviewer that reads ano
 
 ## What it costs
 
-`panel` is two review sessions instead of one. `led` is three plus two short lead calls, plus a verifier per real dispute — five to seven read-only sessions on one review, which is often more than the implementation cost. That is why the default is `single`, the thresholds are conservative, and the proposal always carries the numbers.
+`panel` is two review sessions instead of one. `led` is three plus two short lead calls, plus a verifier per real dispute — five to seven read-only sessions on one review, which is often more than the implementation cost. Choose that structure only when the added coverage justifies the extra calls; the proposal carries the counts so the coordinator can judge it.
