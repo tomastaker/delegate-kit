@@ -4,8 +4,22 @@
 
 **Your agent coordinates. Your chosen models do the work.**
 
+[![Latest release](https://img.shields.io/github/v/release/tomastaker/delegate-kit?color=8B5E3C)](https://github.com/tomastaker/delegate-kit/releases/latest)
 [![CI](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**Model families**<br>
+[![GPT](https://img.shields.io/badge/GPT-412991?style=flat-square)](skills/delegate-kit/examples/config.json)
+[![Claude](https://img.shields.io/badge/Claude-D97757?style=flat-square)](skills/delegate-kit/examples/config.json)
+[![Gemini](https://img.shields.io/badge/Gemini-4285F4?style=flat-square)](skills/delegate-kit/references/routing.md)
+[![Kimi](https://img.shields.io/badge/Kimi-1F2328?style=flat-square)](skills/delegate-kit/examples/config.json)
+[![GLM](https://img.shields.io/badge/GLM-2563EB?style=flat-square)](#add-your-own-team-glm-with-claude-and-gpt)
+
+**Execution tools**<br>
+[![Codex](https://img.shields.io/badge/Codex-1F2328?style=flat-square)](skills/delegate-kit/references/providers.md#gpt-through-codex-cli)
+[![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?style=flat-square)](skills/delegate-kit/references/providers.md#claude-through-claude-code)
+[![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-4285F4?style=flat-square)](skills/delegate-kit/references/providers.md#gemini-through-gemini-cli)
+[![OpenCode](https://img.shields.io/badge/OpenCode-475569?style=flat-square)](skills/delegate-kit/references/providers.md#kimi-and-glm-through-opencode)
 
 <img src="assets/workshop.png" alt="A foreman coordinates a scout, a planner, two independent builders and an inspector in a miniature workshop." width="880">
 

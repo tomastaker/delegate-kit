@@ -22,19 +22,11 @@ const RUNS_DIR = path.join(STATE_DIR, "runs");
 const LEDGER = path.join(STATE_DIR, "ledger.jsonl");
 // Concurrency follows explicit user limits; the host supplies its own capacity.
 /*
- * Потолок времени на прогон, по ролям.
- *
- * Общие 30 минут на всех оказались впритык именно для пишущих ролей. Замер по
- * ledger на 2026-08-24: 17 прогонов implementer на codex дали медиану 17,1 мин
- * и максимум 29,3 мин — один финишировал за 42 секунды до убийства, а
- * следующий (20260824172835-tv4q) в потолок упёрся и был снят на тридцатой
- * минуте уже после коммита, на финальных проверках. Ревьюеры в тех же данных
- * укладываются в 4-13 минут и запаса не требуют.
- *
- * Потолок здесь — предохранитель от зависшего процесса, а не инструмент
- * планирования: платить за него приходится только в аварии, поэтому запас
- * выбран кратный, а не впритык к наблюдаемому максимуму. Конкретный прогон
- * по-прежнему может задать своё число флагом `--timeout`.
+ * Role-specific timeout safeguards. In the 2026-08-24 ledger, 17 Codex
+ * implementer runs had a 17.1-minute median and a 29.3-minute maximum; another
+ * hit the old 30-minute limit after committing, during final checks. Reviewers
+ * finished in 4–13 minutes. Leave headroom for useful work rather than treating
+ * the timeout as a schedule. Individual runs can override it with --timeout.
  */
 const ROLE_TIMEOUT_MIN = {
   planner: 90,
@@ -65,11 +57,9 @@ const RESULT_CONTRACT = `\n\nRETURN FORMAT: your final answer must be a single J
 
 // ---------- helpers ----------
 /*
- * Отсоединённый супервизор запущен со stdio «ignore»: всё, что он пишет в
- * stderr, исчезает. До этой правки провал до записи meta.json — упор в лимит,
- * занятый worktree — оставлял вызывающего с `{"status":"starting"}` для
- * прогона, которого не существует. Теперь такой провал сам записывает meta со
- * статусом failed, и родитель, ждущий meta.json, видит причину.
+ * Detached supervisors discard stderr. A refusal before meta.json exists
+ * must persist failed metadata so the waiting parent receives the reason
+ * instead of reporting a starting run that was never admitted.
  */
 let SUPERVISED = null; // { id, role, backend, model, effort, cwd, write } while running as --_supervise
 const die = (msg, code = 1) => {
@@ -95,22 +85,10 @@ const saveMeta = (m) => writeJson(path.join(runDir(m.id), "meta.json"), m);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 /*
- * Сверка записанного статуса с фактической жизнью процесса.
- *
- * Запись «running» делает супервизор при старте, а снимает — его обработчик
- * `exit`. Если сам супервизор не пережил прогон (убит вместе с группой по
- * таймауту, снят извне, умер вместе с родительской оболочкой), обработчик не
- * отрабатывает, и прогон остаётся «running» навсегда: он держит write-lock на
- * worktree и занимает слот в лимите воркеров, а оркестратор ждёт его вечно.
- *
- * Раньше эта сверка была скопирована внутрь `list` и `wait`, а `status` —
- * единственная команда, которой пользуются для опроса, — печатал meta как есть
- * и врал. Замер 2026-08-24: `status` отдавал «running» для прогона, чей pid был
- * мёртв 7 минут, а `list` в ту же секунду — «orphaned». Теперь сверка одна на
- * всех, и обойти её нельзя.
- *
- * `killReason` важнее факта смерти: если труп оставлен таймером или `kill`,
- * причина уже известна и заменять её на «orphaned» значит терять её.
+ * Reconcile persisted status with process liveness. A supervisor killed before
+ * its exit handler can leave a run marked running, holding a writer slot and
+ * worktree lock indefinitely. All status readers share this reconciliation.
+ * Preserve an existing killReason instead of replacing it with orphaned.
  */
 function reconcile(m) {
   if (!m || m.status !== "running" || alive(m.pid)) return m;
@@ -120,8 +98,8 @@ function reconcile(m) {
     m.result = {
       status: "failed",
       summary: m.killReason === "timeout"
-        ? `Прогон убит по таймауту ${m.timeoutMin} мин. Работа могла быть частично выполнена и закоммичена — проверь worktree ${m.cwd} и stdout.log.`
-        : `Супервизор прогона умер, не записав результат. Проверь worktree ${m.cwd} и stdout.log.`,
+        ? `Run stopped after the ${m.timeoutMin}-minute timeout. Work may be partially completed and committed; inspect worktree ${m.cwd} and stdout.log.`
+        : `The run supervisor exited without recording a result. Inspect worktree ${m.cwd} and stdout.log.`,
       changes: [], checks_run: [], not_verified: [], findings: [], plan: [], questions: [], sources: [], next_steps: [],
     };
     writeJson(path.join(runDir(m.id), "result.json"), m.result);
@@ -193,14 +171,10 @@ function nativeWriterLocks(cwd) {
 }
 
 /*
- * Что осталось в worktree от прерванного прогона.
- *
- * Quota fallback перезапускал тот же бриф в том же worktree, а лимит может
- * сработать после коммитов и незакоммиченных правок первого воркера — второй
- * начинал вслепую и переделывал или ломал сделанное. База берётся из
- * delegate-kit.base, который пишет `agent-wt create`; без него считаются
- * только грязные файлы. Тот же снимок печатает `agent-run inspect` — команда
- * под давнее «read the worktree before rerunning» из документации.
+ * Inspect partial work before retrying an interrupted run. The previous worker
+ * may have committed or left dirty files before hitting a limit. Compare with
+ * the delegate-kit.base saved by agent-wt create; without that base, report
+ * only dirty files. agent-run inspect exposes the same snapshot.
  */
 function inspectWorktree(cwd) {
   const g = gitDirOf(cwd);
@@ -231,14 +205,10 @@ function cmdBudget(opts) {
   console.log(JSON.stringify(result, null, 2));
 }
 /*
- * Мьютекс на «посчитать и занять».
- *
- * Проверка потолка — чтение чужих meta.json и lock'ов, а занятие слота —
- * запись своего meta.json спустя spawn. Восемь параллельных стартов из одного
- * сообщения координатора все проходят чтение до первой записи и все стартуют
- * (Codex-ревью PR #4 воспроизвёл это на agent-wt: восемь lock'ов при cap 1).
- * Файл с флагом wx атомарен на любой POSIX-ФС; труп опознаётся по мёртвому
- * pid. Each supervisor holds its own mutex from admission checks until meta.json
+ * Serialize capacity checks and slot reservation. Without a mutex, concurrent
+ * starts can all count free capacity before any writes metadata. Exclusive
+ * file creation reserves the mutex; a dead holder PID permits recovery.
+ * Each supervisor holds its own mutex from admission checks until meta.json
  * is written. A detach parent releases its preliminary lock before spawning it.
  */
 const CAPS_MUTEX = path.join(STATE_DIR, "caps.lock");
@@ -254,11 +224,10 @@ function acquireCapsMutex(timeoutMs = 15_000) {
   }
 }
 /*
- * Второй мьютекс — репозитория, общий с `agent-wt lock`: каталог
- * <common .git>/delegate-kit.caps.lock, mkdir атомарен. Без него внешний и
- * нативный писатель одного репозитория считали слоты под разными замками и
- * оба проходили при cap 1. agent-run берёт сначала машинный, потом
- * репозиторный; agent-wt только репозиторный — цикла нет.
+ * The repository mutex is shared with agent-wt lock at
+ * <common .git>/delegate-kit.caps.lock. Atomic mkdir serializes native and
+ * external writers. Both entry points acquire the global mutex before the
+ * repository mutex, maintaining a consistent lock order.
  */
 let repoMutexHeld = null;
 function acquireRepoMutex(cwd, timeoutMs = 15_000) {
@@ -300,58 +269,35 @@ function releaseWriteLock(cwd, id) {
   if (existing && existing.id === id) fs.rmSync(lp, { force: true });
 }
 
-/* ---------- доставка завершений (порт из omp AsyncJobManager) ----------
+/*
+ * ---------- completion delivery (adapted from omp AsyncJobManager) ----------
+ * External workers need an explicit completion channel when the host does not
+ * provide native notifications. A delivery hook follows the sink pattern in
+ * omp's packages/coding-agent/src/async/job-manager.ts.
  *
- * Проблема, которую это закрывает: родитель-оркестратор узнаёт о конце
- * внешнего воркера только когда сам спросит. Для воркера своей семьи это
- * решает harness, для чужой (Codex из Claude и наоборот) — никто. Замер
- * 2026-08-26: три воркера отработали, и о каждом стало известно только
- * потому, что пользователь спросил вслух.
+ * Retry transient hook failures and serialize delivery attempts across the
+ * supervisor and list/status/wait/notify callers. The atomic delivery.lock claim
+ * prevents concurrent delivery; dead holders can be recovered. See claimDelivery
+ * for publication of a fully written claim file.
  *
- * Устройство взято у omp (`packages/coding-agent/src/async/job-manager.ts`):
- * сообщает не родитель себе опросом, а сам прогон — родителю, через сток
- * доставки. Оттуда же две детали, без которых сток бесполезен:
- *
- *   1. Ретраи. Хук может не сработать по причине, не связанной с прогоном
- *      (демон уведомлений не поднят, сеть, занятый ресурс). Один выстрел в
- *      пустоту теряет завершение навсегда.
- *   2. Ровно однажды. Доставку пробуют несколько процессов: супервизор в
- *      обработчике `exit`, и любой последующий `list`/`status`/`wait`/`notify`
- *      — в том числе тогда, когда супервизор умер, не доставив. Без атомарной
- *      заявки родитель получит одно и то же завершение дважды.
- *
- * Заявка — файл `delivery.lock`, создаваемый с флагом `wx`: атомарно на любой
- * POSIX-ФС. Труп заявки опознаётся по мёртвому pid, иначе брошенный хук
- * заблокировал бы прогон навсегда.
- *
- * Чего здесь намеренно нет: собственного демона. Очередь дренируется тем, кто
- * и так обращается к прогону, плюс явной командой `notify`. Пока супервизор
- * жив, он ретраит сам — на поллинг падает только остаток.
+ * The supervisor drains retries while alive. Subsequent status readers or an
+ * explicit notify call handle remaining attempts, without a separate daemon.
  */
 
 const HOOK_TIMEOUT_MS = Number(process.env.DELEGATE_KIT_HOOK_TIMEOUT_MS || 60_000);
 const DELIVERY_MAX_ATTEMPTS = 5;
-// Пауза перед попыткой N+1, мс. Длина массива задаёт число ретраев.
+// Delay before attempt N+1 in milliseconds; the array lists retry intervals.
 const DELIVERY_BACKOFF_MS = [5_000, 15_000, 45_000, 120_000];
-// Сколько супервизор готов ждать, дренируя очередь, прежде чем выйти и
-// оставить остаток поллингу. Покрывает первые три паузы из расписания.
+// Supervisor drain budget before polling takes over; covers the first three delays.
 const SUPERVISOR_DRAIN_BUDGET_MS = 90_000;
 
 const claimPath = (id) => path.join(runDir(id), "delivery.lock");
 
 /*
- * Жизненный цикл прогона, отдельно от `status`.
- *
- * `status` отвечает на вопрос «чем кончилось», и его значения менять нельзя —
- * на них завязаны и скилл, и внешние вызовы. Здесь второй, ортогональный
- * вопрос: «можно ли к этому прогону вернуться».
- *
- * У omp состояния живого агента — running | idle | parked | aborted, потому
- * что субагент там живёт внутри процесса и между ходами простаивает. У нас
- * процесс воркера после ответа мёртв всегда, поэтому `idle` был бы враньём:
- * простаивать нечему. Переживает прогон только транскрипт сессии на диске, и
- * `agent-run resume` поднимает его — это ровно `parked`. Раньше узнать это
- * можно было, лишь попробовав `resume` и получив отказ.
+ * Lifecycle describes whether a run can be resumed, separately from its stable
+ * status contract. A worker process exits after its response; only its saved
+ * session transcript survives. Such a session is parked, not idle, and
+ * agent-run resume can reopen it.
  */
 function lifecycleOf(m) {
   if (!m) return null;
@@ -360,20 +306,11 @@ function lifecycleOf(m) {
 }
 
 /*
- * Заявка создаётся через `link`, а не через `open(…, "wx")`.
- *
- * `open` с "wx" атомарен только в части создания: pid дописывается следующей
- * операцией, и между ними файл существует, но пуст. Конкурент в этом окне
- * читал пустоту, получал `Number("") === 0`, считал заявку трупом, сносил её и
- * заходил внутрь. Замер 2026-08-26, 25 раундов по 8 процессов: 2 раунда с
- * двойным вызовом хука и 9 раундов, где проигравший затёр `delivered` своим
- * `pending`. То есть ровно те две гарантии, ради которых заявка и заведена.
- *
- * `link` переносит уже готовый файл: он либо появляется целиком, либо падает с
- * EEXIST. Пустой заявки не существует в принципе, поэтому нечитаемая заявка
- * теперь означает «занято», а не «труп». Чтобы это не превратилось в вечную
- * блокировку, нечитаемая заявка всё же признаётся трупом, но по возрасту — с
- * запасом от потолка одного хука.
+ * Publish a complete claim with link rather than creating an empty file with
+ * open(..., "wx") and then writing its PID. A competing reader could mistake
+ * the empty file for a dead holder and admit a second delivery. link publishes
+ * the prepared file atomically or fails with EEXIST. Treat unreadable claims
+ * as occupied until they exceed the hook timeout recovery margin.
  */
 function claimDelivery(id) {
   const p = claimPath(id);
@@ -391,14 +328,13 @@ function claimDelivery(id) {
       try { holder = Number(fs.readFileSync(p, "utf8").trim()) || 0; } catch { return false; }
       if (holder && holder !== process.pid && alive(holder)) return false;
       if (!holder) {
-        // Нечитаемая заявка — «занято», а не труп: пустой её оставить может только
-        // чужая старая версия скрипта. Чтобы это не стало вечной блокировкой,
-        // такая заявка всё же снимается, но по возрасту.
+        // An unreadable claim may come from an older script. Treat it as occupied
+        // until it ages out, allowing recovery without racing a live owner.
         let ageMs = 0;
         try { ageMs = Date.now() - fs.statSync(p).mtimeMs; } catch { return false; }
         if (ageMs < HOOK_TIMEOUT_MS * 2) return false;
       }
-      fs.rmSync(p, { force: true }); // труп заявки: держатель мёртв или заявка протухла
+      fs.rmSync(p, { force: true }); // Stale claim: the holder died or the claim expired.
     }
   }
   return false;
@@ -416,16 +352,13 @@ function deliveryPayload(m, attempt) {
 }
 
 /*
- * Одна попытка доставки. Возвращает "delivered" | "failed" | null (нечего
- * делать сейчас: хука нет, прогон жив, уже доставлено, не пришёл срок, заявку
- * держит другой процесс).
+ * Attempt one delivery. Return "delivered", "failed", or null when no attempt
+ * is due: no hook, a live run, prior delivery, backoff, or another claim holder.
  */
 function deliverPending(m, opts = {}) {
   if (!m || !m.onFinish) return null;
   if (m.status === "running") return null;
-  // Провал по квоте — не конец работы: fallback уже перезапустил бриф на
-  // другом вендоре, и завершение придёт от нового прогона. Доставлять здесь
-  // значит сообщить родителю о неудаче, которой не было.
+  // A quota-failed attempt leaves completion delivery to its replacement run.
   if (m.status === "failed-quota") return null;
   const d = m.delivery || { state: "pending", attempts: 0, nextAttemptAt: null, lastError: null, deliveredAt: null };
   if (d.state === "delivered" && !opts.force) return null;
@@ -433,8 +366,7 @@ function deliverPending(m, opts = {}) {
   if (d.nextAttemptAt && Date.parse(d.nextAttemptAt) > Date.now() && !opts.force) return null;
   if (!claimDelivery(m.id)) return null;
   try {
-    // Перечитать под заявкой: между проверкой и захватом другой процесс мог
-    // доставить. Это и есть точка, где обеспечивается «ровно однажды».
+    // Re-read under the claim: another caller may have delivered since our check.
     const fresh = metaOf(m.id);
     if (!fresh || !fresh.onFinish) return null;
     const fd = fresh.delivery || d;
@@ -442,8 +374,7 @@ function deliverPending(m, opts = {}) {
     const attempt = (fd.attempts || 0) + 1;
     const payload = deliveryPayload(fresh, attempt);
     const summary = (payload.summary || "").slice(0, 500);
-    // Payload кладётся и файлом: однострочному хуку читать stdin неудобно, а
-    // не прочитать его нельзя — см. трактовку EPIPE ниже.
+    // Also expose the payload as a file for hooks that do not read stdin.
     const payloadPath = path.join(runDir(fresh.id), "delivery-payload.json");
     writeJson(payloadPath, payload);
     const r = spawnSync("/bin/sh", ["-c", fresh.onFinish], {
@@ -453,18 +384,14 @@ function deliverPending(m, opts = {}) {
         DK_STATUS: fresh.status, DK_WORKER_STATUS: fresh.workerStatus ?? "", DK_LIFECYCLE: payload.lifecycle,
         DK_CWD: fresh.cwd, DK_SUMMARY: summary, DK_RESULT_PATH: path.join(runDir(fresh.id), "result.json"),
         DK_LOGS_DIR: runDir(fresh.id), DK_ATTEMPT: String(attempt), DK_PAYLOAD_PATH: payloadPath,
-        DELEGATE_KIT_DEPTH: "", // хук — не воркер, ему запускать воркеров можно
+        DELEGATE_KIT_DEPTH: "", // Hooks are not workers and may launch follow-up workers.
       },
     });
     /*
-     * Судит код возврата, а не факт ошибки записи в stdin.
-     *
-     * Payload уходит хуку на stdin, но однострочный хук (`notify-send …`,
-     * `echo … >> log`) stdin не читает и выходит сразу — труба рвётся, и
-     * `spawnSync` возвращает EPIPE при полностью успешном хуке. Так первый же
-     * стенд 2026-08-26 записал сработавшую доставку как провал и увёл её в
-     * ретраи: 26 раундов из 40. Замер показал, что `status` при EPIPE
-     * достоверен (0 у `echo ok`, 3 у `exit 3`), поэтому решает он.
+     * The exit status decides success, including when writing stdin reports EPIPE.
+     * A short hook may exit successfully without reading the payload. In the
+     * 2026-08-26 fixture, treating that EPIPE as failure retried successful hooks
+     * in 26 of 40 rounds. spawnSync still reported the correct exit status.
      */
     const ok = r.status === 0 && (!r.error || r.error.code === "EPIPE");
     const next = { state: "pending", attempts: attempt, nextAttemptAt: null, lastError: null, deliveredAt: fd.deliveredAt ?? null };
@@ -479,17 +406,19 @@ function deliverPending(m, opts = {}) {
   } finally { releaseDelivery(m.id); }
 }
 
-/* Сверка живости плюс попытка доставки — то, что должен сделать любой, кто
-   вообще посмотрел на прогон. Раньше здесь стоял голый `reconcile`.
-   Перечитать после доставки обязательно: `deliverPending` пишет своё состояние
-   в свежую копию с диска, и объект в памяти остаётся с прежним `delivery`.
-   Без этого `list` печатал «pending» для доставки, которую сам же и выполнил. */
+/*
+ * Reconcile liveness and attempt delivery whenever a run is read. Reload after
+ * delivery because deliverPending updates a fresh metadata copy; otherwise
+ * list can report pending for a notification it just delivered.
+ */
 function touch(m) { const r = reconcile(m); const outcome = deliverPending(r); return outcome ? (metaOf(r.id) || r) : r; }
 
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
-/* Дренаж, пока супервизор жив: ретраить по расписанию, но не дольше бюджета —
-   иначе процесс висит ради хука, который, возможно, не поднимется никогда. */
+/*
+ * Drain scheduled retries within the supervisor's time budget so an unavailable
+ * hook cannot keep the process alive indefinitely.
+ */
 async function deliverWithRetries(id) {
   const start = Date.now();
   for (;;) {
@@ -498,7 +427,7 @@ async function deliverWithRetries(id) {
     const outcome = deliverPending(m);
     const d = metaOf(id)?.delivery;
     if (!d || d.state === "delivered" || d.state === "failed") return;
-    if (outcome === null && !d.nextAttemptAt) return; // заявку держит кто-то другой
+    if (outcome === null && !d.nextAttemptAt) return; // Another process holds the claim.
     const waitMs = d.nextAttemptAt ? Date.parse(d.nextAttemptAt) - Date.now() : 1000;
     if (Date.now() - start + Math.max(waitMs, 0) > SUPERVISOR_DRAIN_BUDGET_MS) return;
     await sleep(Math.max(waitMs, 500));
@@ -757,18 +686,10 @@ async function cmdRun(opts, resumeOf = null) {
   };
 
   /*
-   * Таймаут обязан оставить след.
-   *
-   * Раньше таймер только ставил `killReason` и убивал группу, а статус и
-   * result.json писал обработчик `exit`. Когда супервизор не доживал до него,
-   * прогон навсегда оставался «running» без причины — снаружи это выглядело
-   * как «Codex молча падает» (разбор 2026-08-24, прогон 20260824172835-tv4q).
-   * Теперь причина попадает в meta до убийства, а `reconcile` достроит
-   * result.json при первом же обращении, даже если супервизора уже нет.
-   *
-   * Группа убивается по `-pid`, одиночный процесс — запасным `pid`: дочерний
-   * процесс запущен с `detached`, но если setsid не сработал, группы с таким
-   * идентификатором не существует и первый вызов бросает ESRCH.
+   * Persist the timeout reason before killing the process group. If the supervisor
+   * never reaches its exit handler, reconcile can still reconstruct result.json.
+   * Signal the group with -pid, falling back to the child PID when setsid did not
+   * create that group and the first signal fails with ESRCH.
    */
   const timer = setTimeout(() => {
     const m = metaOf(id);
@@ -817,9 +738,10 @@ async function cmdWait(id, timeoutMin) {
   for (;;) {
     const m = metaOf(id); if (!m) die(`unknown run ${id}`);
     if (m.status !== "running") return printResult(id);
-    /* Пауза перед сверкой: обработчик `exit` супервизора пишет статус и
-       result.json уже после смерти дочернего процесса, и без задержки живой
-       прогон объявлялся бы осиротевшим в этом окне. */
+    /*
+     * Allow the supervisor's exit handler to write status and result.json before
+     * reconciling a dead child, avoiding a false orphan report in that window.
+     */
     if (!alive(m.pid)) { await new Promise((r) => setTimeout(r, 1500)); return printResult(id); }
     if (Date.now() > deadline) die("wait timed out", 124);
     await new Promise((r) => setTimeout(r, 2000));
