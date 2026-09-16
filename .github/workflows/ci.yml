@@ -19,7 +19,7 @@ jobs:
       - name: Bash syntax + shellcheck
         run: |
           sudo apt-get install -y -qq shellcheck >/dev/null
-          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt bench/seeded-review/run.sh"
+          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt tests/*.sh"
           for f in $files; do bash -n "$f"; done
           shellcheck -S warning $files
       - name: Node syntax
@@ -27,19 +27,29 @@ jobs:
           node --check skills/delegate-kit/scripts/agent-run
           for f in skills/delegate-kit/scripts/*.mjs skills/delegate-kit/hooks/*.mjs; do node --check "$f"; done
       - name: Writer caps and detach refusal
-        run: bash skills/delegate-kit/tests/caps.sh
+        run: bash tests/caps.sh
       - name: Routing policy
-        run: bash skills/delegate-kit/tests/route.sh
+        run: bash tests/route.sh
       - name: Completion delivery
-        run: bash skills/delegate-kit/tests/delivery.sh
+        run: bash tests/delivery.sh
       - name: Safety gate
-        run: bash skills/delegate-kit/tests/gate.sh
+        run: bash tests/gate.sh
       - name: Worktree inspect for reruns
-        run: bash skills/delegate-kit/tests/inspect.sh
+        run: bash tests/inspect.sh
       - name: SKILL.md stays a policy, not a manual
         run: |
           size=$(wc -c < skills/delegate-kit/SKILL.md)
           echo "SKILL.md: $size bytes"
           test "$size" -le 8000
-      - name: Validate result schema JSON
-        run: python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
+      - name: Validate packaged schemas and example JSON
+        run: |
+          python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
+          python3 -m json.tool skills/delegate-kit/assets/preset.schema.json >/dev/null
+          python3 -m json.tool skills/delegate-kit/examples/config.json >/dev/null
+          node skills/delegate-kit/scripts/dk.mjs presets validate --file skills/delegate-kit/examples/main.json
+      - name: Runtime help from a relocated package
+        run: |
+          stage=$(mktemp -d)
+          cp -R skills/delegate-kit "$stage/installed skill"
+          cd "$stage"
+          node "$stage/installed skill/scripts/dk.mjs" help

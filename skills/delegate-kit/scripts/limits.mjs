@@ -1,4 +1,4 @@
-import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const names = ['writers', 'workers', 'runs', 'retries'];
@@ -31,7 +31,7 @@ export function resolveLimits(opts = {}, config = {}, env = process.env) {
 }
 
 // Small argv-only bridge for agent-wt; never interpolate configuration into shell code.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.existsSync(process.argv[1]) && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const fail = error => {
     process.stderr.write(`delegate-kit: ${error.message}\n`);
     process.exitCode = 1;

@@ -1,75 +1,51 @@
 ---
 name: delegate-kit
-description: Coordinate repository work through scoped researchers, planners, implementers and fresh reviewers. Use for features, refactors, implementation plans, delegation and second opinions. Select role ladders for the current coordinator and mix supported native and external workers.
+description: Coordinate repository work with a user-selected team preset, scoped specialists and independent review. Use when asked to use Delegate Kit, configure or copy a team, delegate substantial work, or obtain a second opinion. Small understood tasks can stay in the current chat.
 license: MIT
 ---
 
-# delegate-kit
+# Delegate Kit
 
-The current chat is the coordinator. Own user intent, decomposition, briefs, acceptance, integration and reporting. Delegate bounded outcomes to workers; delegation depth is one.
+The current chat remains the coordinator. A preset assigns helpers and describes when to use them; it never selects or changes the chat model. Apply the same coordination policy with every model and host. Managed delegation depth is one.
 
-## 1. Decide what benefits from delegation
+## Establish the team
 
-Compare a worker's useful independent work and potential parallel progress with briefing, repeated context, verification and likely repairs. Use task knowledge and observed results; pricing searches and hypothetical token bills are unnecessary. File count alone does not determine task size.
+For `start`, first setup, creating/copying/editing a preset or targeted help, read [setup.md](references/setup.md). Conversation is the user interface: offer the bundled `main` example for first setup, gather the missing choices, show the proposed team/change, then save within the user's authorization. A valid saved preset does not require another interview.
 
-| Shape | Use when |
-|---|---|
-| DIRECT | Completing the work in existing context costs less than briefing and checking a worker; or the action must stay with the coordinator under the user's permissions |
-| SCOUT | Locating facts, relevant code or primary sources is a bounded independent outcome |
-| PLAN | A separate planner can resolve meaningful ambiguity, interacting constraints or decomposition; skip a redundant plan |
-| SINGLE | One substantial, specified outcome has one writer |
-| PARALLEL | Ready tasks have independent outcomes, disjoint write scopes and stable interfaces |
-| SEQUENTIAL | One result changes the next task's assumptions |
+Find `scripts/dk.mjs` relative to this installed skill; invoke it with Node. `delegate-kit Y2` is a skill request, not a promised global shell command. For runtime commands and precedence, read [routing.md](references/routing.md).
 
-State the shape and reason for substantial work. Choose worker count from ready outcomes and integration capacity, within actual host limits and explicit user limits. Reassess after results; neither a fixed number of workers nor maximum fan-out is a target. Coupled edits have one owner.
+Open a context using a reliable namespaced host chat ID, or retain the generated session handle. Explicit preset wins, then the saved chat selection, then the default for a new chat. An explicit selection persists in this chat; “only this task” uses `--task-only` on its prepare calls. Unknown IDs fail visibly. Preserve session/run handles across compaction and handoff. Never infer a team from the coordinator's family, cwd or another chat. Without configuration, offer setup before delegating; a trivial direct task can proceed.
 
-## 2. Select the coordinator's role profile
+Read only the active catalog. Honor an explicit profile; otherwise choose by the meaning of its `when`, then an applicable role default. Consider direct work or missing configuration when no profile fits. Additional researchers, UI specialists and reviewers are ordinary named profiles in the same preset. Descriptions guide judgment; keywords, diff size, model rankings and price algorithms do not select profiles.
 
-Before dispatch, read `references/routing.md`. Personal assignments live in `~/.delegate-kit/config.json`: `profiles.gpt`, `profiles.claude`, `profiles.kimi`, or another declared coordinator family. The profile selects workers; it never replaces the chat's model. An explicit session instruction overrides saved choices.
+## Choose useful work
 
-Each role is an ordered ladder: level 1 is the usual choice; later levels are permitted alternatives for harder work. Use the appropriate level immediately when risk or ambiguity justifies it. Choose models from the user's configured ladder and actual host/provider capabilities, not vendor rankings. With no assignment, inherit the current model and disclose unavailable choices.
+Clarify the requested result, constraints and acceptance checks. Consider substantial independent outcomes and useful specialists explicitly. Choose direct work, one worker, parallel independent outcomes or dependent steps. A separate planner is useful for consequential uncertainty; it is optional. State the shape briefly for substantial work.
 
-Resolve each selected role and level:
+Parallel writers need disjoint ownership and stable interfaces. Coupled changes have one owner or proceed sequentially. Choose worker count from ready outcomes and integration capacity; there is no default cap of one. Honor explicit user and host limits. Do independent work while workers run; avoid duplicating their investigation.
 
-```
-agent-run route --parent codex --role implementer --level 1
-agent-run route --parent codex --role reviewer --level 2 --author-backend self
-```
+## Prepare and dispatch
 
-Native means the host can launch that worker. External means a supported CLI executes it. Check the actual tool schema, model identifiers and supported effort. `doctor` only detects installed CLIs. A configured target that is unavailable stays visible; choose another authorized candidate deliberately. Native dispatch: `references/hosts.md`. Before a new external CLI/model combination, read `references/providers.md`, installed help and `references/external.md`.
+Use [brief-template.md](references/brief-template.md): outcome, necessary facts, scope, workspace, constraints, checks and authorized finishing actions. Workers should begin from the brief and repository without the parent's full conversation. `when` and coordination instructions belong to you; profile `instructions` and the brief go to the worker.
 
-## 3. Brief and dispatch
+For CLI execution read [external.md](references/external.md); for native or Paseo bridges read [hosts.md](references/hosts.md). Check [providers.md](references/providers.md) when choosing a new executor/version or after a capability error. Installed binaries do not establish authorization. Preserve harness, provider, model, reasoning and access exactly, or surface a specific refusal. A CLI running a similar model is not permission to replace the harness.
 
-For work spanning several outcomes, record scope, dependencies, status and acceptance checks in existing tickets or `.scratch/<task>/`. Ready tasks have accepted dependencies. Preserve unfinished plans. A planner returns decomposition; the coordinator accepts or revises it before assigning work.
+Prepare with the saved session, stable task ID, selected profile and brief. The runtime snapshots configuration, reserves limits and returns run IDs. An `also_run` review set is reserved together: dispatch every returned run with fresh independent context. Each local writer needs a linked Git worktree; `agent-wt create` supplies it and prepare acquires ownership. Paseo workspaces remain owned by Paseo. Preserve relevant uncommitted work before branching.
 
-Use `references/brief-template.md`: outcome, constraints, ownership and acceptance commands. Give enough detail to remove consequential ambiguity while leaving local implementation choices to the worker. A stranger with only the brief and repository must be able to begin.
+`run` starts a CLI supervisor or returns the verified native/Paseo invocation. A bridge invocation is preparation, not an agent: call the actual host tool once and attach its returned ID. If dispatch outcome is uncertain, reconcile with the host before another call. Record correlated completion/permission events. Unique Claude native definitions must be discovered by that host; otherwise use CLI. Never rewrite a shared role when switching presets.
 
-Every writer gets an isolated worktree and one owner. `agent-wt create <task>` branches from HEAD; account for relevant uncommitted changes first. Native writers need `agent-wt lock <task>` and the absolute path. External writers take the lock through `--cwd`. Preserve other people's edits.
+## Await and verify results
 
-Set a shared task ID for native and external runs. Track starts and retries with the lightweight budget counter described in `references/routing.md`; include each native dispatch and resume. External `run`/`resume` records its own start. Review total starts, retries and useful progress before another wave. Explicit user limits are hard; otherwise the coordinator decides whether the next call remains worthwhile.
+Use host completion notifications or runtime `wait`. Read the compact result by default; full private logs are diagnostic artifacts. No log-summarizer model or periodic LLM heartbeat is needed. After each bounded wait, check runtime health or query the saved host agent without sending a prompt. A wait timeout does not stop the worker or authorize a duplicate. An attention alert requires diagnosis of process/turn progress; continue waiting only with a concrete reason, or stop/recover a confirmed stall. See [lifecycle and recovery](references/routing.md#lifecycle-and-recovery). Intervene for a blocker, permission request, user correction, explicit failure, breached limit or data risk.
 
-## 4. Accept, clarify or strengthen
+Transport acknowledgement, terminal turn, valid result and coordinator acceptance are separate. Compare evidence against acceptance checks, run relevant checks the adapter could not perform, and accept only completed work. Explain unverified claims. Runtime `accept` refuses incomplete required review sets; it records your judgment, not proof that tests passed.
 
-Inspect the returned evidence and run the relevant acceptance checks. A worker's done status does not establish completion. Workers return `references/result-schema.json`; report checks excluded by their adapter and run them in an authorized workspace.
+For a bounded omission, resume the saved run and launch that new attempt: the same exact executor session and snapshot remain. Changing profile/model/harness or seeking independent judgment requires a fresh session. Before replacing a writer, stop the previous one, inspect partial changes and transfer ownership. A failed attempt never triggers hidden model/provider fallback. Limits count reservations and continuations, not status/wait calls.
 
-- Missing context, an imprecise brief or a bounded oversight: clarify and resume the same worker when its context remains useful.
-- Insufficient reasoning or repeated substantive mistakes: choose a stronger configured level and start a fresh worker with the task, prior result, current diff and remaining checks.
-- Missing tools, access or environment: address that obstacle; a stronger model does not supply access.
+## Review, integrate and report
 
-A ladder is not an automatic retry loop. Reassess expected benefit before every retry; stop or report a blocker when another attempt is unlikely to help. Before replacing a writer, inspect partial work and ensure the previous writer has stopped and released ownership. Resume preserves model/effort; a changed choice is a fresh run.
+Use a fresh read-only configured reviewer for substantial delegated implementation and risky changes. Trivial direct actions do not require a review ceremony. Select coverage by actual contracts and failure modes; [review.md](references/review.md) explains lenses and reconciliation. Two reviewers receive the same frozen spec/diff and no initial findings from each other. Family diversity is optional and does not prove correctness.
 
-## 5. Review and integrate
+Reproduce disputed findings with commands. Resume for a specific correction; use another configured specialist only for a substantive reason. Integrate and perform finishing actions within user authorization. Keep worktrees and logs until useful changes are preserved; cancellation never deletes partial work.
 
-Review delegated implementation, risk-zone changes and substantial coordinator-written changes with a fresh read-only agent given the frozen diff and spec. Fresh context is required in every family. Family diversity is a separate choice; configured reviewer assignments govern it.
-
-Choose review reasoning for contract complexity and risk, not only diff length. One reviewer is sufficient when it covers the risk; complementary reviewers may run independently when useful within user limits. `references/review.md` defines lenses, proposals and reconciliation. Reviewers do not receive each other's findings before reporting.
-
-Reproduce disputed findings with commands first. Use a verifier for unresolved judgement. Clarify or strengthen the fix worker as in step 4. After behavior-changing fixes, rerun affected checks and resume the reviewer with new hunks and finding dispositions; use a fresh brief if resume is unavailable.
-
-Integrate and publish within user authorization and repository conventions. Mark tickets accepted only after checks pass. Release/remove worktrees after preserving accepted changes.
-
-## 6. Report and hand off
-
-Report changed behavior, actual checks, remaining limits, selected profile/role levels and native versus external execution. Confirm actual model only from runtime evidence; otherwise distinguish requested model from unknown identity. Report fresh context separately from family diversity. For tickets, close with completed X of Y and the next unfinished item.
-
-For ownership transfer, write `.scratch/handoff/<date>-<task>.md` with state, decisions, blockers and pointers to specs, tickets and diffs. Include task counter ID and remaining user limits. No secrets.
+Report changed behavior, actual checks, remaining gaps, selected preset/profiles and transports. Distinguish requested model from runtime-confirmed identity, and fixture tests from live execution. On handoff retain session/run IDs, workspaces, task/remaining limits, spec and result pointers. For old configuration/runs read [migration.md](references/migration.md); new dispatch never uses family-selected v1 routing.

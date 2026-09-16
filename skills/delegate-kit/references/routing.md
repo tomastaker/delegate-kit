@@ -1,112 +1,49 @@
-# Role profiles and execution
+# Preset resolution and execution
 
-## One configuration file
+The coordinator selects a profile semantically from the active catalog. Code validates exact executor settings and references; it never classifies tasks by keywords or model family.
 
-Edit `~/.delegate-kit/config.json`, or `$DELEGATE_KIT_HOME/config.json` when the state directory is overridden. `examples/config.json` contains complete GPT, Claude and Kimi teams as examples, not an exhaustive list. All profiles live inside the same file. For a first configuration, copy the example there and customize it; for an existing configuration, merge the desired entries into `profiles`. Keep credentials in the provider's configuration. [Setup and a custom GLM team](../../../README.md#add-your-own-team-glm-with-claude-and-gpt).
-
-`profiles.<name>.roles` assigns workers for a coordinator. The family declared by `--parent` selects the profile automatically: built-in parent `codex` has family `gpt`, while `claude`, `kimi`, `glm` and `gemini` have their respective families. `--profile NAME` selects a named profile explicitly. `--parent-model` describes the current model; it does not switch the chat or select a profile by model-name guesswork. Distinct teams for two models in the same family can use named profiles and `--profile`.
-
-Names start with a lowercase letter and contain lowercase letters, digits, hyphens or underscores, such as `glm-5-3` or `glm-in-opencode`. There is no automatic profile selection by model version or host within one family. Parent detection uses the Codex/Claude environment; other hosts specify `--parent` or `DELEGATE_KIT_PARENT`. A custom parent backend must declare its family and one of the supported adapters in `backends`; it does not add a new CLI adapter or native tool capability.
-
-Top-level `roles` supplies shared defaults. The selected profile replaces each role it defines completely; roles absent from that profile use shared assignments. An absent verifier uses the reviewer ladder; an absent review-lead uses the planner ladder. With no assignment, the current model is inherited on a native route.
-
-### Role ladders
-
-A role is a nonempty ordered array:
-
-```json
-{
-  "profiles": {
-    "gpt": {
-      "roles": {
-        "researcher": [
-          { "model": "gpt-5.6-luna", "effort": "high" },
-          { "model": "gpt-6-astra", "effort": "low" }
-        ],
-        "reviewer": [
-          { "family": "claude", "runner": "claude", "model": "opus", "effort": "high" }
-        ]
-      }
-    }
-  }
-}
-```
-
-`--level 1` selects the usual candidate. `--level 2` selects the next permitted step; an out-of-range level fails. The coordinator chooses a level for risk, ambiguity and observed mistakes. No automatic escalation or cross-provider retry occurs. A difficult task can start above level 1.
-
-| Candidate field | Meaning |
-|---|---|
-| `model` | Exact host/CLI identifier; omit to inherit native or CLI configuration |
-| `effort` | Supported reasoning setting; omit when unsupported or to retain defaults |
-| `family` | Model lineage, such as gpt, claude, kimi or glm; defaults to the parent family |
-| `runner` | `auto` (default), `native`, or external `codex`, `claude`, `gemini`, `opencode` |
-| `backend` | Optional advanced named executor from `backends`; useful for custom endpoints |
-| `efforts` | Optional declared supported effort values for this exact configured candidate |
-
-A candidate that names an unavailable executor remains selected and reports that limitation. The coordinator must deliberately select another authorized candidate or address the missing capability. It must not silently downgrade or spend on an unconfigured family merely because its CLI exists.
-
-## Native and external are capabilities
-
-A native worker is launched and supervised by the current host's tools. Its family need not match the host if the host really supports other families. The native invocation uses the parent's tool contract, not the external adapter of the target model.
-
-`runner: auto` prefers native execution for the supported families. The default route assumes the parent family can run natively; verify this against the actual tools before dispatch. Use `--no-native` for a host without fan-out, or supply the known supported families with `--native-families gpt,claude`. These flags describe observed capabilities, not a way to grant them. Check the specific model and effort too. A separate backend profile in the same family can still be native.
-
-`runner: native` requires that capability and refuses an external `run`. An explicit CLI runner always chooses external execution, including a same-family worker. `--external` requests an external route unless it conflicts with an explicit native requirement. `agent-run run` executes only CLI workers; use the host's tool for a native route.
-
-For external OpenCode, use a `provider/model` returned by `opencode models` for your configured provider. This establishes the identifier, not account access. For a native Kimi worker, use the identifier exposed by that host or omit it to inherit; an OpenCode identifier is not automatically a native identifier.
-
-Omitted external model/effort uses that CLI's own configuration, not the coordinator's model. Confirm those settings before relying on them. A model/effort override must be supported by the exact host and model; `recommended_reasoning` is guidance, not a provider parameter. Adapters: `providers.md`. Native details: `hosts.md`.
-
-## Selection and compatibility
-
-The active profile's candidates and shared role assignments form the allowed family pool, together with the parent. Inactive profiles do not authorize their models in this task. `auto` supports any number of configured families. The route reports `solo`, `duo` or `mixed` to describe the pool; these labels do not determine worker count or review quality.
-
-Existing `mode: solo|duo`, `families` (legacy backend IDs), `backends`, object role assignments and preferences remain accepted. Explicit solo restricts the task to the parent family; an excluded role assignment fails visibly. Explicit duo requires two families. Use the role profiles for new setups. Invalid configuration, including an inactive profile, fails visibly rather than restoring defaults.
-
-Precedence: explicit session choice carried in CLI arguments → selected profile role → shared role → backend defaults → current native model or CLI defaults. `--backend`, `--family`, `--runner`, `--model`, `--effort` and `--level` express deliberate per-call choices. An explicit model without a family/backend belongs to the current family; family is never inferred from its spelling. To select a foreign model explicitly, include `--family` or its configured `--backend`.
-
-Legacy mode selection is per-call → `DELEGATE_KIT_MODE` → JSON → auto. Legacy main-codex/main-claude presets remain backend preferences. `roles.<role>.<backend>: [model, effort]` is retained for migration. Custom `backends.<id>` contains a declared family, supported adapter, optional model and supported efforts. A GLM endpoint behind Claude Code must declare family glm; the executable name does not establish diversity.
-
-Review output keeps `fresh_context_required` and `cross_family` separate. `--author-backend self` means the current parent. A configured reviewer ladder applies to each generated reviewer slot; choose a different authorized candidate explicitly for another slot when useful. Review depth chooses coverage, while role level chooses the model/effort. They are independent. An explicit `review.allow_multiple: false` restricts multiple reviewers unless the user grants an exception.
-
-## Task counters and limits
-
-For delegated work, choose one stable task ID and ticket IDs. The counter tracks starts and resumes, not tokens or money. Keep the same task/ticket when continuing or repairing work. Configuration can set `limits.max_workers`, `max_writers`, `max_runs` and `max_retries`; omitted fields impose no kit limit. Other than retries (which may be zero), limits are positive integers.
-
-- `max_workers` / `max_writers`: concurrent known runs. External runners count active external processes machine-wide and native writer locks in the current repository. Native read-only workers remain supervised by the host/coordinator. Actual host capacity is always binding.
-- `max_runs`: total starts and resumes for a task, including failed attempts after launch admission.
-- `max_retries`: repair attempts per ticket, recorded with `--retry` for both clarification resumes and fresh replacements.
-
-CLI `--max-*` overrides the corresponding `DELEGATE_KIT_MAX_*` environment value, then JSON. Treat saved user limits as hard unless the user's session instruction changes them; flags are not autonomous permission to increase a limit. CLI/environment limits apply to that invocation/session; persistent user limits belong in JSON. Task files store usage, not a copy of configuration limits.
-
-Inspect usage without modifying it:
+`<dk>` below means `node <absolute installed skill>/scripts/dk.mjs`.
 
 ```
-agent-run budget --task feature-name
+<dk> context open --session codex:CHAT_ID --preset X1
+<dk> catalog --session codex:CHAT_ID
+<dk> prepare --session codex:CHAT_ID --task feature-a --agent research-general --brief /abs/brief.md --cwd /abs/repository
+<dk> run RUN_ID
+<dk> wait RUN_ID --timeout-ms 60000
+<dk> result RUN_ID
+<dk> resume RUN_ID --brief /abs/follow-up.md
+<dk> run NEW_ATTEMPT_ID
+<dk> accept NEW_ATTEMPT_ID
 ```
 
-Before a native start or resume, reserve its count once:
+Use a reliable namespaced host chat ID. Without one, omit `--session` on context open once and preserve the generated handle. Cwd and transient shell PIDs do not identify a chat. Prepare and catalog require the retained handle.
 
-```
-agent-run budget --task feature-name --record --ticket find-docs
-agent-run budget --task feature-name --record --ticket find-docs --retry
-```
+Precedence: explicit preset, saved session choice, default for a new session, setup. Switching presets affects new dispatches. `prepare --preset Y2 --task-only` uses Y2 without changing the chat; pass the override to each preparation belonging to that task. `context open --preset Y2` persists it. Unknown explicit IDs do not fall back. Resume always uses the saved snapshot, including limits and executor session, even if the preset has since changed or been removed.
 
-Then dispatch through the host. A recorded reservation is an attempt even if the host subsequently refuses it; state that outcome rather than launching another worker without accounting. Use host notifications for completion. This is bookkeeping for the coordinator, not an automatic interceptor of arbitrary native tools.
+A role default is used only when `--agent` is omitted and `--role` is given. Missing defaults fail; they do not inherit the chat model. `inherit_model: true` is supported only with explicit native transport and verified current-model evidence, and excludes model/provider fields. CLI defaults never mean chat inheritance.
 
-External starts and resumes record themselves once, including detached launches:
+## Limits and required review sets
 
-```
-agent-run run --parent codex --role planner --task feature-name --ticket plan --brief brief.md
-agent-run resume RUN_ID --brief clarification.md --retry
-```
+Optional preset `limits` accepts positive `max_workers`, `max_writers`, `max_runs`, and nonnegative `max_retries`. No implicit worker count applies. `max_runs` counts reservations, including continuations, within a namespaced chat/task budget. `max_retries` counts continuations per profile in that task. Fresh runs and continuations are marked separately in metadata. Failed or cancelled reservations do not refund attempt limits. This conservative rule prevents a crash from granting an uncounted model call.
 
-Resume inherits the saved task and ticket. Pass `--retry` when repairing an unsatisfactory result; a normal continuation still counts as a run. A run/retry limit without a task ID is rejected. Exhausted budgets reject admission before launching another external process. Counters update atomically in `tasks/<task>.json` under the state directory.
+Prepare/resume reserve concurrency before dispatch, including native read-only agents. Release unused reservations with `cancel`. Global known worker counts include v1 external runs and native worktree locks; the host's own capacity also applies. Explicit CLI/environment limits follow the legacy precedence (call > environment > preset); do not raise them without user authorization. Status/wait/result do not consume attempts.
 
-Before each wave or repair, inspect progress and count. Continue when the likely useful outcome justifies context transfer and checking; stop repetitive ineffective attempts. User limits bound this judgement; there are no default three-writer/eight-writer thresholds and no pricing lookup requirement.
+`review.also_run` recursively expands a required set. References must be unique, acyclic and read-only reviewers. Prepare validates all routes and reserves the whole set or refuses it before dispatch. Run each returned ID independently. `accept` requires a valid done result for every required profile in the group. It does not mean the runtime ran acceptance tests: the coordinator verifies evidence before calling it.
 
-## Failure and continuation
+## Lifecycle and recovery
 
-Missing context or a bounded oversight calls for clarification. Insufficient reasoning calls for a stronger permitted level and a fresh worker. Tool/access failures call for an environment fix. Before replacement, inspect partial work, stop the old writer and transfer ownership.
+States: prepared, starting, running, permission, cancelling, orphaned, finished, blocked, failed, cancelled, timeout. Finished means a terminal turn with valid result; `accepted` records the separate coordinator decision. Provider errors or invalid JSON fail even with exit code zero. Full logs stay in the private run folder, separate from the compact result.
 
-Resume keeps the saved adapter, family, model and effort, even when profile configuration changes. A CLI-default model remains dependent on that CLI's configuration; pin a known model for reproducibility. A route exposes requested choices; actual runtime identity remains unknown unless confirmed by metadata. Invalid result JSON is a failed worker contract even when the CLI exits successfully.
+A timeout of `wait` returns `wait_timed_out: true` with current state and leaves the worker alive. An optional `prepare --timeout-ms N` is a process deadline; there is no automatic idle kill. Repeated `run` on an already dispatched reservation refuses a duplicate. Native dispatch with an unknown outcome must be reconciled at the host before attach or recovery.
+
+Each CLI supervisor writes a local heartbeat every five seconds. Status checks verify process identity; a missing supervisor becomes orphaned, and a heartbeat older than 30 seconds requests diagnosis even if the PID still exists. Five minutes without output/progress also sets `health.attention_required`; adjust that diagnostic interval per run with `prepare --stall-ms N` for known long operations. This threshold requests investigation; it does not kill a process or release its lease. Host routes require a real status observation at least once per minute while waiting, and repeated unchanged observations do not reset the progress timer.
+
+`wait` returns early for required attention. On an ordinary wait timeout, inspect returned health and the current host/process state before another bounded wait. On a no-progress alert, inspect bounded logs and the current operation; either document why more time is warranted or interrupt/recover a confirmed stall. Repeating an unchanged wait indefinitely is not a recovery strategy. Status polling and heartbeat files perform no model calls. The coordinator must remain active to perform host probes and decide recovery; an exited parent chat cannot be awakened by this local library.
+
+Native dispatch failures and late IDs are handled through [host reconciliation](hosts.md#dispatch-and-events); uncertain outcomes retain ownership. A confirmed not-started dispatch can release capacity without inventing an agent ID.
+
+`cancel` preserves work and retains ownership until the process group stops. If a supervisor disappears, status becomes orphaned; inspect logs and run `cancel` or `recover` when process identity/termination is established. PID birth checks prevent signalling an unrelated reused PID. Uncertain live descendants retain the lease for manual diagnosis. A stale operation mutex is a visible diagnostic; confirm the owning operation stopped before removing it.
+
+Local writers require a linked worktree and use the existing `delegate-kit.lock`. The v2 runtime owns its lease; `agent-wt release/remove` cannot clear an active v2 lease. A Paseo workspace has a daemon-scoped lease and remains owned by Paseo; local cleanup never removes it.
+
+Legacy commands are documented in [migration.md](migration.md). Do not use `agent-run route` to resolve a v2 preset.

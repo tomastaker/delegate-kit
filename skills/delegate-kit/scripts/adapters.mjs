@@ -3,12 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { narrowPermissions } from './opencode-permissions.mjs';
 const present = value => value !== null && value !== undefined;
-export function buildCommand({ adapter, model, effort, prompt, write, resumeId, skillDir, agentName = 'delegate-kit', permissionRules }) {
+export function buildCommand({ adapter, model, effort, provider, prompt, write, resumeId, skillDir, agentName = 'delegate-kit', permissionRules }) {
   const schema = path.join(skillDir, 'references', 'result-schema.json');
   if (adapter === 'codex') {
     const args = ['exec', ...(resumeId ? ['resume'] : []), '--json', '--skip-git-repo-check', '-c', 'agents.enabled=false'];
     args.push('-c', `sandbox_mode="${write ? 'workspace-write' : 'read-only'}"`);
     if (present(model)) args.push('-m', model);
+    if (present(provider)) args.push('-c', `model_provider=${JSON.stringify(provider)}`);
     if (present(effort)) args.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`);
     args.push('--output-schema', schema, '-o', '__OUT__');
     if (resumeId) args.push(resumeId);

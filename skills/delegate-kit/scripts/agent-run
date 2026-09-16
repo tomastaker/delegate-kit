@@ -91,6 +91,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
  * Preserve an existing killReason instead of replacing it with orphaned.
  */
 function reconcile(m) {
+  if (m?.schema_version === 2) return m; // v2 owns descendant/process identity and its leases.
   if (!m || m.status !== "running" || alive(m.pid)) return m;
   m.status = m.killReason || "orphaned";
   m.finished = m.finished || nowIso();
@@ -133,7 +134,9 @@ function lockPath(cwd) { const g = gitDirOf(cwd); return g ? path.join(g, "deleg
 
 function activeRuns() {
   if (!fs.existsSync(RUNS_DIR)) return [];
-  return fs.readdirSync(RUNS_DIR).map(metaOf).filter(Boolean).filter((m) => m.status === "running" && alive(m.pid));
+  return fs.readdirSync(RUNS_DIR).map(metaOf).filter(Boolean).filter((m) => m.schema_version === 2
+    ? ["prepared", "starting", "running", "permission", "cancelling", "orphaned"].includes(m.status)
+    : m.status === "running" && alive(m.pid));
 }
 
 // Why the worktree cannot take this writer, or null. Checked in the parent before the
@@ -142,6 +145,7 @@ function writeLockConflict(cwd, id) {
   const lp = lockPath(cwd);
   if (!lp) return `--cwd ${cwd} is not inside a git repository; writers must run in a git worktree`;
   const existing = readJson(lp);
+  if (existing?.kind === "v2" && existing.id !== id) return `worktree is owned by v2 run ${existing.id}; use dk.mjs cancel/recover after inspecting partial work`;
   if (existing && existing.kind === "native" && existing.id !== id) {
     return `worktree is locked for a native subagent (${existing.label || existing.id}, since ${existing.since}). Release it with \`agent-wt release <name>\` when that subagent is done.`;
   }
@@ -754,6 +758,8 @@ function cmdLog(id, which = "stdout") { const p = path.join(runDir(id), which ==
 async function main() {
 const argv = parseArgs(process.argv.slice(2));
 const sub = argv._[0];
+if (["status", "wait", "kill", "resume", "log"].includes(sub) && argv._[1] && metaOf(argv._[1])?.schema_version === 2) die("v2 run: use scripts/dk.mjs; legacy lifecycle operations cannot release its ownership");
+if (["route", "run", "preset", "doctor"].includes(sub)) process.stderr.write("agent-run: legacy v1 command; use scripts/dk.mjs for v2 presets. Saved v1 runs remain supported.\n");
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 switch (sub) {
   case "run": await cmdRun(argv); break;
