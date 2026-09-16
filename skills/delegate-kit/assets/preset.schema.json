@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Delegate Kit v2 complete team preset",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "coordination": {
+      "type": "string",
+      "minLength": 1
+    },
+    "defaults": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+      }
+    },
+    "agents": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+          },
+          "when": {
+            "type": "string",
+            "minLength": 1
+          },
+          "instructions": {
+            "type": "string",
+            "minLength": 1
+          },
+          "executor": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "harness": {
+                "enum": [
+                  "codex",
+                  "claude",
+                  "gemini",
+                  "opencode",
+                  "pi",
+                  "omp"
+                ]
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provider": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reasoning": {
+                "type": "string",
+                "minLength": 1
+              },
+              "transport": {
+                "enum": [
+                  "auto",
+                  "native",
+                  "cli",
+                  "paseo"
+                ]
+              },
+              "inherit_model": {
+                "const": true
+              }
+            },
+            "required": [
+              "harness"
+            ],
+            "oneOf": [
+              {
+                "required": [
+                  "model"
+                ],
+                "not": {
+                  "required": [
+                    "inherit_model"
+                  ]
+                }
+              },
+              {
+                "required": [
+                  "inherit_model",
+                  "transport"
+                ],
+                "properties": {
+                  "transport": {
+                    "const": "native"
+                  }
+                },
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "model"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "provider"
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "access": {
+            "enum": [
+              "read-only",
+              "workspace-write"
+            ]
+          },
+          "review": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "also_run": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$"
+                }
+              },
+              "independent": {
+                "const": true
+              }
+            },
+            "required": [
+              "also_run"
+            ]
+          }
+        },
+        "required": [
+          "role",
+          "when",
+          "executor"
+        ]
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_runs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_workers": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_writers": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "agents"
+  ]
+}

@@ -1,260 +1,177 @@
-<div align="center">
-
 # Delegate Kit
 
-**Your agent coordinates. Your chosen models do the work.**
+Delegate Kit is an agent skill that lets your coding assistant delegate work to a team you choose. Save each specialist's model, tools and responsibilities in a named preset. Your current chat coordinates the work, collects results and checks them before accepting changes.
 
-[![Latest release](https://img.shields.io/github/v/release/tomastaker/delegate-kit?color=8B5E3C)](https://github.com/tomastaker/delegate-kit/releases/latest)
+Use it when you want a researcher to investigate a bug, a separate worker to implement a fix, or a fresh reviewer to check it. Teams can use one model family or combine Codex, Claude Code and other supported tools. Small, understood tasks can stay in the current chat.
+
 [![CI](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-**Model families**<br>
-[![GPT](https://img.shields.io/badge/GPT-412991?style=flat-square)](skills/delegate-kit/examples/config.json)
-[![Claude](https://img.shields.io/badge/Claude-D97757?style=flat-square)](skills/delegate-kit/examples/config.json)
-[![Gemini](https://img.shields.io/badge/Gemini-4285F4?style=flat-square)](skills/delegate-kit/references/routing.md)
-[![Kimi](https://img.shields.io/badge/Kimi-1F2328?style=flat-square)](skills/delegate-kit/examples/config.json)
-[![GLM](https://img.shields.io/badge/GLM-2563EB?style=flat-square)](#add-your-own-team-glm-with-claude-and-gpt)
+<img src="assets/workshop.png" alt="A coordinator assigns work to researchers, builders and an independent reviewer." width="880">
 
-**Execution tools**<br>
-[![Codex](https://img.shields.io/badge/Codex-1F2328?style=flat-square)](skills/delegate-kit/references/providers.md#gpt-through-codex-cli)
-[![Claude Code](https://img.shields.io/badge/Claude_Code-D97757?style=flat-square)](skills/delegate-kit/references/providers.md#claude-through-claude-code)
-[![Gemini CLI](https://img.shields.io/badge/Gemini_CLI-4285F4?style=flat-square)](skills/delegate-kit/references/providers.md#gemini-through-gemini-cli)
-[![OpenCode](https://img.shields.io/badge/OpenCode-475569?style=flat-square)](skills/delegate-kit/references/providers.md#kimi-and-glm-through-opencode)
-
-<img src="assets/workshop.png" alt="A foreman coordinates a scout, a planner, two independent builders and an inspector in a miniature workshop." width="880">
-
-</div>
-
-Delegate Kit is a skill for coding agents that turns a substantial task into scoped work, assigns it to the models you choose, and checks the result. Your current chat stays in charge: it decides what to delegate, accepts the work and integrates the changes.
-
-- **Use your own team.** Assign a model and reasoning level to each role, with stronger options when needed.
-- **Mix native and external workers.** GPT can implement natively while Claude plans and reviews through its CLI. Use OpenCode for configured Kimi or GLM models.
-- **Make useful work parallel.** Independent tasks run together; coupled changes stay with one owner. The coordinator chooses the number of workers within your limits and the host's capacity.
-- **Check the result independently.** Writers use separate git worktrees. Reviewers start with a fresh context and the specification.
-- **Keep overhead proportionate.** Small work stays in the chat. Clarify a weak brief or strengthen the model when the evidence calls for it.
-
-## Get started
+## Install
 
 ```bash
 npx skills add tomastaker/delegate-kit
 ```
 
-Then ask your coding agent:
+Select the coding assistant where you want to use the skill. You need Node.js 20+ and the tools chosen for your team. Writers use Git worktrees, which also require Bash and jq. Sign in to each chosen tool separately. Delegate Kit does not include accounts or credentials.
 
-> Use Delegate Kit to implement this feature. Delegate useful independent work and verify the result.
+For SSH work, install the skill and execution tools on the machine that runs the workers. Your local login does not authorize a remote machine.
 
-No configuration is required: workers inherit the current model where the host supports native agents. To use other models or CLIs, choose them explicitly in your request or save the profiles below. Installing a CLI alone does not authorize its use.
+## Start in your chat
 
-Native delegation requires the host's subagent tools. External execution requires Node 20+, bash, git, jq and an authenticated supported CLI. [Execution paths and restrictions](skills/delegate-kit/references/providers.md).
+Ask your assistant:
 
-<details>
-<summary>Native role installation and upgrading</summary>
+> Use Delegate Kit start. Help me configure my default team, starting from the main example.
 
-After installing the skill, run its `hooks/install.sh --dry-run`, then `hooks/install.sh` to install native role definitions and the optional shell gate. From a repository checkout:
+Setup happens in conversation. The assistant checks installed tools, asks which models and reasoning levels to use, and helps describe when each specialist should be called. You can supply the whole team at once or answer a few questions at a time, in your own language.
 
-```bash
-skills/delegate-kit/hooks/install.sh --dry-run
-skills/delegate-kit/hooks/install.sh
-```
+The assistant shows the proposed configuration before saving it. The included [`main` preset](skills/delegate-kit/examples/main.json) is the default starting example. You can adopt it, change it or build a smaller team. Installation does not activate it automatically, overwrite existing presets or run paid model tests.
 
-Use `--agents-only`, `--hooks-only`, `--claude` or `--codex` to select what is installed. Upgrading an older installation removes managed model pins so role profiles can choose the model. Unrelated configuration is preserved and backups are made. Restart affected sessions.
+Once configured:
 
-To uninstall the managed hooks and roles, run `hooks/uninstall.sh` from the installed skill, then remove your skill links. Run records remain available.
+> Use Delegate Kit main to investigate this bug, implement the fix and review the result.
 
-</details>
+These are requests to the skill in your chat, not global terminal commands. The exact skill picker or slash-command syntax depends on your assistant.
 
-## Four roles, one coordinator
+## Requests you can make
 
-| Role | What it returns | When it helps |
-|---|---|---|
-| **Researcher** (`researcher`) | Facts, relevant code and source evidence | A bounded search can be done independently |
-| **Planner** (`planner`) | Tasks, dependencies, ownership and acceptance checks | The task needs meaningful decomposition or clarification |
-| **Implementer** (`implementer`) | Scoped changes and executed checks | A complete outcome deserves its own worker |
-| **Reviewer** (`reviewer`) | Findings against the diff and specification | The result needs an independent check |
-
-The coordinator selects ready tasks, writes briefs, handles blockers and accepts results. It can work directly when delegation would cost more than it helps. A separate planner is optional. Reviewers see the specification and frozen diff without the author's conversation or each other's findings.
-
-An occasional **finding verifier** resolves disputed findings; a **review lead** helps organize a substantial review. They reuse the reviewer and planner model ladders unless you configure them separately.
-
-## Choose your models in one file
-
-Edit **`~/.delegate-kit/config.json`** (or `$DELEGATE_KIT_HOME/config.json` if you override the state directory). This one file holds all your profiles under `profiles`. Each profile describes a team of workers; the coordinator is the model already running in your chat.
-
-**GPT, Claude and Kimi are example teams. You can add your own profiles.** To get started:
-
-1. Open the [example config.json](skills/delegate-kit/examples/config.json). It contains all three teams in one file.
-2. For a first configuration, save a copy at the path above. If you already have a configuration, merge the profiles you want into its existing `profiles` object, preserving your other settings. Profiles are entries inside this file; they do not need separate files or renaming.
-3. Keep the teams you need and replace their model identifiers and reasoning settings with choices supported by your host or CLI. Add another named entry under `profiles` for each additional team.
-
-By default, the coordinator family selects the matching profile: `--parent codex` selects `profiles.gpt`, `--parent claude` selects `profiles.claude`, and `--parent kimi`, `glm` or `gemini` selects the corresponding name. Codex and Claude sessions can be detected from their environment; specify `--parent` for other hosts. An explicit `--profile NAME` selects a particular team. Neither option starts or changes the chat model.
-
-Each role is an ordered list. **The first entry is the usual choice; later entries are available strengthening steps.** These are alternatives, not agents all launched together.
-
-Here is a GPT-led team with native GPT implementers and external Claude planning and review:
-
-```json
-{
-  "profiles": {
-    "gpt": {
-      "roles": {
-        "researcher": [
-          { "model": "gpt-5.6-luna", "effort": "high" },
-          { "model": "gpt-6-astra", "effort": "low" }
-        ],
-        "planner": [
-          { "family": "claude", "runner": "claude", "model": "fable", "effort": "high" }
-        ],
-        "implementer": [
-          { "model": "gpt-6-astra", "effort": "low" },
-          { "model": "gpt-6-astra", "effort": "high" }
-        ],
-        "reviewer": [
-          { "family": "claude", "runner": "claude", "model": "opus", "effort": "high" }
-        ]
-      }
-    }
-  }
-}
-```
-
-These model names illustrate a personal setup, not required dependencies or a quality ranking. Replace them with identifiers available in your host or configured CLI. Only use effort values that the chosen model and execution path support; omit `effort` when it cannot be set.
-
-[Open the complete editable example](skills/delegate-kit/examples/config.json), which includes all three profiles:
-
-| Coordinator | Research | Planning | Implementation | Review |
-|---|---|---|---|---|
-| GPT | Luna → Astra, native | Fable through Claude CLI | Astra low → high, native | Opus → Fable through Claude CLI |
-| Claude | Sonnet → Opus, native | Fable, native | Opus medium → high, native | Astra through Codex CLI |
-| Kimi | Current Kimi model, native | Astra through Codex CLI | Current Kimi model, native | GLM through OpenCode |
-
-The Kimi example inherits your current native model instead of guessing its identifier. It requires a host with native worker support. Replace `YOUR_PROVIDER/YOUR_GLM_MODEL` with the exact identifier shown by `opencode models`. Configuration never installs a model or changes provider credentials.
-
-### Add your own team: GLM with Claude and GPT
-
-Suppose your chat already runs GLM 5.3. This configuration assigns native GLM research and implementation, Claude planning, and GPT review:
-
-```json
-{
-  "profiles": {
-    "glm": {
-      "roles": {
-        "researcher": [
-          { "runner": "native" }
-        ],
-        "planner": [
-          { "family": "claude", "runner": "claude", "model": "opus" }
-        ],
-        "implementer": [
-          { "runner": "native" }
-        ],
-        "reviewer": [
-          { "family": "gpt", "runner": "codex", "model": "YOUR_GPT_MODEL" }
-        ]
-      }
-    }
-  }
-}
-```
-
-Add the `glm` entry beside your other profiles. Replace `YOUR_GPT_MODEL` with the exact model identifier accepted by your Codex CLI; use an available Claude model in place of `opus` if needed. Omitted native model settings inherit from the current session. Native execution requires real subagent tools in that host. If those tools are unavailable, replace each native GLM assignment with an explicit OpenCode assignment from the table below.
-
-From a checkout, inspect the selected routes without calling a model:
-
-```bash
-skills/delegate-kit/scripts/agent-run route --parent glm --role implementer
-skills/delegate-kit/scripts/agent-run route --parent glm --role reviewer --author-backend self
-```
-
-The first route selects a native GLM implementer; the second selects an external GPT reviewer through Codex. GLM remains the coordinator for both.
-
-To keep different teams for two GLM versions or hosts, name them, for example, `glm-5-3` and `glm-in-opencode`, and explicitly select the desired profile:
-
-```bash
-skills/delegate-kit/scripts/agent-run route --parent glm --profile glm-5-3 --role implementer
-```
-
-Create that named entry under `profiles` before using the command. Profile names start with a lowercase letter and use lowercase letters, digits, hyphens or underscores. Automatic selection uses the family; it does not distinguish model versions or hosts. You can also tell the coordinator: “Use Delegate Kit with parent glm and profile glm-5-3.” The coordinator carries those choices into its routing calls.
-
-Profiles configure teams; support for a new execution environment depends on its tools. Native workers use the current host's actual agent tools. External workers currently use the `codex`, `claude`, `gemini` or `opencode` adapters. Models served through OpenRouter or another provider can use that provider's OpenCode configuration. A new external CLI requires a code adapter; adding a profile does not create one. Direct external Kimi CLI execution is not implemented. [Adapter contracts and provider setup](skills/delegate-kit/references/providers.md).
-
-### Native or external?
-
-| Entry | Meaning |
+| Request | What it does |
 |---|---|
-| `{ "model": "gpt-6-astra", "effort": "low" }` in the GPT profile | Prefer a native worker in the current family |
-| `{ "runner": "native" }` | Require a native worker and inherit its model; report unavailable native support |
-| `{ "family": "claude", "runner": "claude", "model": "opus" }` | Start an external Claude Code process |
-| `{ "family": "gpt", "runner": "codex", "model": "gpt-6-astra" }` | Start an external Codex CLI process, even from a GPT chat |
-| `{ "family": "glm", "runner": "opencode", "model": "YOUR_PROVIDER/YOUR_GLM_MODEL" }` | Start the configured GLM model through OpenCode |
+| `Delegate Kit start` | Walk through team setup |
+| `Use Delegate Kit main` | Select `main` for this chat |
+| `Use frontend only for this task` | Use another preset without changing the chat selection |
+| `Create a preset called backend` | Build a separate team |
+| `Copy main to frontend` | Create an independent copy |
+| `Change frontend's UI implementer` | Edit one profile in that team |
+| `Make main the default` | Choose the team for new chats |
+| `Show my Delegate Kit presets` | List saved teams |
 
-`family` describes the model; `runner` describes how it executes. Omitted `family` means the coordinator's family. Omitted `runner` means `auto`: use native support when the host has it, otherwise the family's supported CLI. The coordinator checks actual capabilities; same family alone does not prove that a host can spawn workers or set their reasoning effort.
+An explicit preset takes precedence over the chat selection, which takes precedence over the saved default. Switching teams never changes your chat's model. Existing workers keep the configuration they started with.
 
-One profile can use any number of families. A request such as “GPT only for this task” restricts the saved team for that task; unavailable or excluded assignments are surfaced for deliberate selection, never silently replaced. [Configuration precedence, capabilities and migration](skills/delegate-kit/references/routing.md).
+## How work gets assigned
 
-## When a worker needs help
+A **preset** is a complete team. A **profile** describes one specialist, including its role, model and when to use it. A **worker** is a running instance of a profile. The same profile can handle several independent tasks, and one role can have several profiles.
 
-The coordinator inspects the result before deciding what to do next:
+The coordinator reads the profiles' descriptions and chooses the ones relevant to the task. You can also name a profile yourself. There is no fixed pipeline that runs every specialist:
 
-- **The brief was incomplete or the omission is small:** clarify and continue with the same worker.
-- **The reasoning was insufficient:** choose a stronger configured level and hand a fresh worker the current state, useful changes and remaining checks.
-- **Tools or access are missing:** resolve the environment problem.
+- A clear fix can go straight to an implementer, followed by review.
+- A bug with an unknown cause can start with research.
+- A change with unresolved design choices can need a planner before implementation.
+- Independent changes can run in parallel with separate ownership and worktrees.
 
-A difficult task may start at a stronger level immediately. Changing the model or effort starts a fresh worker; a resume preserves its original executor. The previous writer must stop and release ownership before a replacement continues. Every repair attempt needs a reason; the ladder is never an automatic retry loop.
+Results return to the coordinator, which decides what happens next. Researchers and implementers do not start their own teams. Reviewers receive a fresh context with the specification and a fixed version of the changes.
 
-## Parallelism and limits
+There is no default one-worker limit. The coordinator chooses parallelism from the available independent work, subject to your configured limits and the host's capacity. Waiting does not launch another worker. Local health checks use no model calls, though processing status results still consumes coordinator tokens.
 
-The coordinator weighs independent work, context transfer, expected quality and checking effort. It uses task evidence and observed progress, without looking up API prices or estimating a token invoice. More workers are useful only while they improve the expected result.
+## The main preset
 
-There is no fixed kit-wide worker count. To set your own hard limits, add this optional section beside `profiles`:
+[`examples/main.json`](skills/delegate-kit/examples/main.json) is the English version of the maintainer's working team. All seven profiles use CLI execution.
+
+| Profile | Model and reasoning | Assignment |
+|---|---|---|
+| `researcher` | Codex, GPT-5.6 Luna, medium | Bounded code and documentation lookup |
+| `researcher-hard` | Codex, GPT-5.6 Sol, medium | Uncertain causes, interacting failures and complex investigations |
+| `planner` | Codex, GPT-6 Astra, low | Approach, dependencies, ownership, risks and acceptance checks |
+| `implementer` | Codex, GPT-5.6 Sol, medium | Features, fixes, tests and documentation |
+| `implementer-ui` | OMP/OpenRouter, Qwen 3.8 Max, medium | Interfaces, components, interactions and responsive styling |
+| `reviewer` | Codex, GPT-5.6 Sol, medium | Independent review of ordinary changes |
+| `reviewer-hard` | Codex, GPT-6 Astra, high | Review of changes with a high cost of failure |
+
+The two researchers are alternatives. So are the two reviewers. A difficult investigation does not have to pass through the basic researcher first. For example, the coordinator might select `researcher-hard` immediately for duplicate payment requests and `reviewer-hard` for the resulting fix.
+
+Model availability and reasoning options depend on your account and execution tool. Setup checks those choices before adopting the example. You can use a Codex-only team, a Claude-only team, or a mixed team with independently chosen tools and models. There is no requirement to match the coordinator's model family.
+
+The UI profile needs OMP and an authorized OpenRouter connection. Its current adapter restricts worker tools and does not supply browser automation or shell execution. The coordinator must perform the running-UI checks when the worker cannot. See [OMP setup](skills/delegate-kit/references/omp-setup.md) and the [compatibility table](skills/delegate-kit/references/compatibility.md).
+
+## Make it yours
+
+You do not need to edit JSON. For example:
+
+> Copy main to backend. Remove the UI specialist. Use my configured Claude Code model for implementation. Keep the Codex reviewers. Ask me for any missing model or reasoning choices before saving.
+
+Or describe a new specialist:
+
+> Add a second researcher for database problems. Use it for query plans, transaction boundaries and migration investigations. Keep the ordinary researcher for other lookups.
+
+Be specific about the work that distinguishes profiles. "Investigate intermittent failures across services" gives the coordinator more to work with than "use for hard tasks."
+
+If you prefer editing files, each preset is one JSON document. A small team can look like this:
 
 ```json
 {
-  "limits": {
-    "max_workers": 6,
-    "max_writers": 3,
-    "max_runs": 20,
-    "max_retries": 2
+  "schema_version": 2,
+  "id": "research",
+  "defaults": { "researcher": "researcher" },
+  "agents": {
+    "researcher": {
+      "role": "researcher",
+      "when": "Find relevant code, tests and documentation for a bounded question.",
+      "instructions": "Return evidence and unresolved questions. Keep files unchanged.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-luna",
+        "reasoning": "medium",
+        "transport": "cli"
+      }
+    }
   }
 }
 ```
 
-These numbers are examples, not defaults. `max_workers` and `max_writers` cap known concurrent workers; `max_runs` counts starts and resumes per task; `max_retries` counts repair attempts per ticket. The host's own limits still apply. The coordinator records native starts and resumes in the same lightweight counter that external runs use automatically. Native read-only concurrency remains supervised by the host/coordinator, since it has no worktree lock.
+`when` guides the coordinator's selection. `instructions` go to the worker with its task. `defaults` identifies the usual profile for a role. Optional `coordination` text describes team-wide choices. A required additional reviewer can be configured through `review.also_run`. See the [schema](skills/delegate-kit/assets/preset.schema.json) and [setup reference](skills/delegate-kit/references/setup.md).
 
-Without configured limits the coordinator still tracks progress and reassesses repeated attempts. The counter records calls, not a monetary budget. Full native token usage may be unavailable. [Counter commands and exact limits](skills/delegate-kit/references/routing.md#task-counters-and-limits).
+Saved configuration lives outside the installed skill:
 
-## Inspect a route without calling a model
-
-From a checkout:
-
-```bash
-skills/delegate-kit/scripts/agent-run doctor
-skills/delegate-kit/scripts/agent-run route --parent codex --role implementer
-skills/delegate-kit/scripts/agent-run route --parent claude --role implementer
-skills/delegate-kit/scripts/agent-run route --parent kimi --role reviewer --author-backend self
-skills/delegate-kit/scripts/agent-run route --parent codex --role implementer --level 2
+```text
+~/.delegate-kit/
+  settings.json
+  presets/main.json
+  presets/backend.json
 ```
 
-The output identifies the profile, role level, requested model, reasoning and native or external route. `doctor` detects installed CLIs; it does not test authentication or model access. Use `agent-run --help` for run, resume, budget and status commands, and `agent-wt --help` for worktrees and ownership.
+Run state and session selections live under the same root. Set `DELEGATE_KIT_HOME` to use another directory. Skill updates leave your presets intact. Preset IDs are case-sensitive; names that differ only by case cannot coexist. Copies are independent, and edits check the previous revision to prevent overwriting another change.
 
-## Guarantees and limits
+## Supported tools and limits
 
-Worktrees prevent competing writers from owning the same checkout; they are not security sandboxes. Adapter permissions differ. Some read-only workers cannot execute shell checks, so the coordinator runs those checks and reports what remains unverified.
+CLI adapters are implemented for Codex, Claude Code, Gemini, OpenCode, Pi and OMP. Native Codex/Claude and Paseo use host bridges that require compatible tools in the current environment. The [compatibility table](skills/delegate-kit/references/compatibility.md) separates implemented routes from fixture tests, local protocol checks and real model runs. Support does not mean every route has been tested against a live account.
 
-A fresh reviewer and a different model family can provide useful checks; neither guarantees correctness. The coordinator verifies findings and acceptance criteria. Live Gemini, Kimi and GLM execution has not been validated for this release; adapter tests use fixtures. The historical [seeded review experiment](bench/seeded-review/README.md) is evidence from one setup, not a universal model ranking.
+The runtime preserves the selected tool, provider, model and reasoning settings. Unsupported combinations fail explicitly. It can resume the same worker session for a specific correction; independent review starts a new session. A timeout alone does not trigger a replacement or change models.
 
-<details>
-<summary>Local checks — no model calls</summary>
+Writers use isolated worktrees, but worktrees are not a security sandbox. Tool restrictions depend on the execution environment. The coordinator checks results before accepting them, and cancelled work keeps its partial changes available for inspection.
+
+## Reference
+
+- [Setup and preset management](skills/delegate-kit/references/setup.md)
+- [Runtime commands, limits and recovery](skills/delegate-kit/references/routing.md)
+- [CLI execution](skills/delegate-kit/references/external.md)
+- [Native agents and Paseo](skills/delegate-kit/references/hosts.md)
+- [Providers and tool restrictions](skills/delegate-kit/references/providers.md)
+- [Independent review](skills/delegate-kit/references/review.md)
+
+For terminal use, invoke `node /path/to/delegate-kit/scripts/dk.mjs help` using the installed skill path. There is no globally installed `dk` command.
+
+## Upgrading from v1
+
+Ask your assistant to run the migration dry run first. It reports choices that need your input before converting the old configuration to complete presets. Applying the migration creates backups and preserves edited v2 presets. [Migration instructions](skills/delegate-kit/references/migration.md).
+
+The old execution helpers and optional hooks remain for compatibility. New v2 CLI use does not require installing global hooks or static native roles.
+
+## Development
+
+The installable skill is in `skills/delegate-kit`. Tests live outside it in [`tests`](tests), so they do not travel with the installed skill. Run the local checks without calling a model:
 
 ```bash
-bash skills/delegate-kit/tests/route.sh
-bash skills/delegate-kit/tests/caps.sh
-bash skills/delegate-kit/tests/gate.sh
-bash skills/delegate-kit/tests/inspect.sh
-bash skills/delegate-kit/tests/delivery.sh
+bash tests/route.sh
+bash tests/caps.sh
+bash tests/gate.sh
+bash tests/inspect.sh
+bash tests/delivery.sh
 ```
 
-</details>
+[Behavioral checks and the opt-in live test](tests/behavioral.md) cover what deterministic tests cannot establish. Live tests require account authorization and are not part of CI.
 
-## License and acknowledgments
+## License and credits
 
-MIT. Review lenses and the standards baseline draw from [mattpocock/skills](https://github.com/mattpocock/skills) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Host dispatch and git coordination were informed by [Hyperskills](https://github.com/hyperb1iss/hyperskills); scoped ownership by [Superpowers](https://github.com/obra/superpowers). The original artwork was inspired by [ponytail](https://github.com/DietrichGebert/ponytail).
+[MIT](LICENSE). Review practices draw from [mattpocock/skills](https://github.com/mattpocock/skills) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Git coordination was informed by [Hyperskills](https://github.com/hyperb1iss/hyperskills) and [Superpowers](https://github.com/obra/superpowers). Artwork was inspired by [ponytail](https://github.com/DietrichGebert/ponytail).

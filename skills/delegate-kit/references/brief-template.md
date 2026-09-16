@@ -1,59 +1,23 @@
-# Brief template
+# Self-contained briefs
 
-Include the shared task ID and ticket ID for start/retry accounting. Keep it under ~40 lines. The worker reads the code itself; your job is to remove ambiguity, not to narrate the repository.
+Give a worker the intended outcome, necessary facts/files, constraints, workspace ownership, acceptance checks and authorized finishing actions. Keep unrelated transcripts and logs out. The runtime adds profile instructions and the canonical result contract; `when` is only for the coordinator.
 
-The same brief serves both dispatch paths: `--brief` for an external `agent-run` worker, or the prompt body for a native subagent. Do not restate the role in it — the role preamble comes from `agent-run` or from the installed `dk-*` definition. Stage spec/diff files within the permitted directory, or include their contents in the brief, when the adapter denies external-directory reads. Shell checks excluded by the adapter belong to the coordinator.
-
-A native writer needs one extra line the external one gets from `--cwd`: **the absolute worktree path it may touch.**
-
-```markdown
-# Task: <short name>
-
-## Goal
-<one paragraph: what must be true when you are done>
-
-## Spec
-<path to .scratch/<task>/spec.md, or 3-8 bullet requirements>
-
-## Ticket
-<path to .scratch/<task>/issues/NN-slug.md when the slice has one — the brief points at it, it does not restate it>
-
-## Acceptance criteria
-- <observable check 1, ideally a command: `pnpm test -- tariffs`>
-- <check 2>
-
-## Where to look
-- <dir/file> — <why>
-- <dir/file> — <why>
-
-## Constraints
-- Follow the repo's AGENTS.md/CLAUDE.md. Do not touch: <paths>.
-- No new dependencies without stating why.
-- <project-specific rule>
-
-## Worktree (native writers only)
-Work only inside `<absolute path from agent-wt create>`. Run git as `git -C <that path> ...`.
-
-## Return
-The delegate-kit result JSON. If anything is ambiguous, return `status: blocked` with precise `questions` instead of guessing.
+```
+Task: <bounded outcome>
+Goal: <observable behavior>
+Specification: <essential requirements or accessible spec artifact>
+Relevant context: <files/sources and why they matter>
+Workspace: <absolute local worktree or daemon workspace handle>
+Ownership: <editable scope; preserve other contributors' changes>
+Constraints: <contracts, dependencies, permissions>
+Acceptance: <checks and expected results>
+Finishing actions: <commit/integration/publish only as authorized>
 ```
 
-## Role-specific additions
+A writer needs an isolated linked worktree or an owned Paseo workspace. Make referenced artifacts readable within its permissions. Some read-only paths exclude shell; ask the coordinator to run command checks instead of changing access. Worktree isolation does not itself sandbox tools.
 
-**planner**: "Do not change files. Return `plan` as ordered steps with the files each step touches, `questions` split into blocking and non-blocking, and the checks that prove completion."
+For a researcher, request primary sources/code evidence and explicit uncertainty. For a planner, request dependencies and criteria, not implementation. For a reviewer, provide the frozen diff and spec without author reasoning or other reviewers' findings. A lens (spec, correctness, standards) can prioritize attention while still allowing material findings outside it.
 
-**reviewer**: "Read-only. The diff is at `<path>`; the spec at `<path>`. Return `findings` with severity (`high` | `medium` | `low`), `file`, `line`, `claim`, `evidence`, `suggested_fix`, and `kind` (`spec` | `correctness` | `standards` | `nit`). Findings only — the diff is already known, and scope is the diff."
+Continuation example: “Check reconnect behavior and update the result; preserve the accepted investigation.” `resume` retains the exact agent and snapshot. Re-review example: “Findings 1 and 3 are fixed in this diff; finding 2 is refuted by this test. Check the new hunks and dispositions.”
 
-**reviewer on a panel** (add to the above): "Your lens is `<spec | correctness | standards>` — its definition is in `references/review.md`; for `standards`, the smell baseline there applies under the repo's own rules. The lens is your priority, not your boundary: report a high-severity problem outside it too. Concentrate on `<files the lead or route assigned>`; skip `<generated, lockfiles, vendored>`. Set `lens` on every finding. You are one of `<n>` reviewers; you do not see the others' findings." Externally the lens also goes on the command: `--lens <lens> --panel <id>`.
-
-**fix worker** (a fresh implementer after review): "Ticket at `<path>`; frozen diff at `<path>`; findings at `<path>`. The previous worker reported: `<its summary and next_steps>`. Change only what the findings name; run the checks the ticket names; return the same result JSON."
-
-**re-review** (the same reviewer, resumed): "Findings 1 and 3 are fixed — diff of the fixes at `<path>`. Finding 2 is refuted: `<reason>`. Confirm or reject each, review the new hunks; the rest of the diff stands as reviewed." A fresh reviewer, when resume is impossible, gets the same text plus the original findings and the full diff.
-
-**review-lead**, call 1: "Spec at `<path>`. Diff stat: `<agent-run route --role reviewer --diff output>`. Depth: `led`. Return `plan`: one step per reviewer with lens, files to concentrate on, exclusions, and the brief text." Call 2: "Reviewer results: `<result.json paths or pasted JSON, labelled A/B/C>`. Return one merged `findings` list with `raised_by`; disputes as `verdict: needs-human`."
-
-**verifier**: "Finding: <text>. Counter-argument: <text>. Return `findings[0].verdict` as `confirmed`, `refuted` or `needs-human` with evidence."
-
-**researcher**: "Primary sources only. Every claim with URL and date. Mark anything you could not open as UNVERIFIED. Return `summary` and `sources`."
-
-**Strengthened replacement:** give the accepted task, current worktree/diff, previous result, concrete failure and remaining checks. Name the selected profile/role level and why it changed. Confirm the old writer has stopped and ownership is released. Count this start as a retry of the same ticket.
+A fresh replacement gets the current worktree/diff, accepted results, the concrete remaining failure and unfinished checks. Verify the prior writer stopped and ownership was released. Independent review always starts with fresh context, even when it uses the same model.

@@ -1,30 +1,10 @@
-# Review: depth, lenses, composition
+# Independent review
 
-How many reviewers a diff deserves, which angle each one takes, and how their findings become one list. `agent-run route --role reviewer --diff <file> --author-backend <family|self>` applies all of it and prints the result; this file is the reasoning behind that output.
+Review substantial delegated implementation and changes whose failure modes justify an independent check. Select profiles from the active team's descriptions and explicit defaults. Trivial direct work does not need an agent ceremony. Scope coverage to actual contracts, ambiguity and failure impact; keywords, line counts and family rankings do not pick reviewers.
 
-## Fresh context and family diversity
+Every initial reviewer gets a fresh read-only context, the same frozen specification and diff, and no other reviewer's findings. Freshness and family diversity are different properties. Two agents of the same model can provide independent analysis; agreement alone is not proof.
 
-Every review uses a fresh read-only agent and a frozen diff/spec. This applies equally in solo and duo. Family diversity is a separate property, not a binary label for whether a review counts.
-
-When several families are allowed, consider another capable family when otherwise comparable. User assignments and known task suitability can select the author's family. A second slot should add a complementary lens and independently gathered evidence, rather than merely endorsing the first reviewer. It can belong to the same family in solo.
-
-Slots use correctness, spec and standards priorities. The coordinator can choose a different composition when justified by the task; state the reason. A hard reviewer backend assignment applies to every slot. See routing.md for mode boundaries and preferences.
-
-## Depth
-
-| Depth | Reviewers | When |
-|---|---|---|
-| `single` | A | the default: under ~400 changed lines, ≤ 10 files, one module, no risk zone |
-| `panel` | A + B, parallel and blind to each other | above any of those, or any risk zone touched |
-| `led` | lead → A + B + C → lead | ~1200+ lines, 25+ files, 3+ modules, or a risk zone with a large diff |
-
-A **mechanical** diff (formatting, lockfile bump, generated client) is always `single`; size means nothing there. Pass `--kind mechanical`.
-
-The thresholds are starting points. The ledger records `lens` and `panel` per run: after a few panels, look at how many findings slot B raised that A did not and how many of those survived verification. If B keeps returning one low-severity nit per panel, raise the thresholds.
-
-The coordinator chooses useful coverage within the user's limits and the host's capacity. Thresholds propose a review shape, not mandatory fan-out. `review.allow_multiple: false` is an explicit user restriction; request an exception or use one reviewer. An explicit user-selected `--depth` can record that exception. Count every review start/resume in the task budget.
-
-The reviewer model ladder and review depth are separate: a stronger single reviewer may be appropriate for a small risky change, while a large mechanical diff need not use the highest level. Configured reviewer assignments apply to all generated slots. For deliberate cross-family slots, resolve each authorized candidate separately and provide independent briefs.
+A profile's `review.also_run` is a required set, validated and reserved by `prepare`. Dispatch all returned runs and keep their initial results independent. A missing/unavailable mandatory reviewer makes the set incomplete. Optional extra coverage is a coordinator decision within user limits. A review lead can help resolve difficult decomposition; it is never an automatic prelude.
 
 ## Lenses
 
@@ -62,15 +42,6 @@ Four structural checks sit alongside the smells, adapted from addyosmani/agent-s
 - **Unnamed Remedy** — a finding that says "too complex" without a move → name the restructuring: a typed model or dispatcher for a conditional chain, orchestration split from business logic, a pass-through wrapper deleted, a helper extracted.
 - **Bulk Dependency Bump** — several packages upgraded in one change, changelog unread, lockfile diff unreviewed → one dependency per change, changelog read for behaviour changes, lockfile diff in the review, green suite before and after.
 
-## The lead
-
-At `led` depth the **review lead** (`dk-review-lead`; planner ladder unless separately configured) is called twice, and both calls are short because it reads *around* the diff, not through it:
-
-1. **Before** — spec plus diff stat in, `plan` out: one reviewer per step with lens, files to concentrate on, exclusions, and the brief text. The brief is the most consequential artifact of the whole review, so choose the planning level for the ambiguity and risk.
-2. **After** — the reviewers' result JSONs in, one merged `findings` list out, by the rules below.
-
-At `panel` depth the parent does both jobs itself with the same rules; the lead exists for the size at which the parent would otherwise be reading three reports into its own context.
-
 ## Merge rules
 
 Reviewers run **in parallel and blind to each other**. A reviewer that reads another's findings anchors on them and the second opinion collapses into agreement; the merge is a separate step.
@@ -81,6 +52,5 @@ Reviewers run **in parallel and blind to each other**. A reviewer that reads ano
 - Dedupe by meaning; `file:line` catches only the trivial duplicates.
 - Rank by severity, then by how many slots raised it. Drop nothing silently.
 
-## What it costs
 
-`panel` is two review sessions instead of one. `led` is three plus two short lead calls, plus a verifier per real dispute — five to seven read-only sessions on one review, which is often more than the implementation cost. Choose that structure only when the added coverage justifies the extra calls; the proposal carries the counts so the coordinator can judge it.
+After a concrete fix, repeat the affected checks and resume the relevant reviewer with the new hunks and finding dispositions. For disputed claims use reproducible commands first, then a configured verifier if meaningful uncertainty remains. Avoid an unbounded argument to consensus. Accept only after checking the evidence and every required reviewer result.

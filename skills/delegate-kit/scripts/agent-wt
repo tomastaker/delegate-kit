@@ -53,7 +53,7 @@ lock_state() { # state of one lock file: unlocked | locked(...) | stale-lock(...
   local kind pid; kind=$(jq -r '.kind // "process"' "$lf"); pid=$(jq -r '.pid // empty' "$lf")
   # A native lock has no process behind it: the parent holds it on behalf of its own
   # subagent and releases it by hand. It is live until someone releases it.
-  if [ "$kind" = "native" ]; then echo "locked(native, label=$(jq -r '.label // "-"' "$lf"), since=$(jq -r '.since // "?"' "$lf"))"; return; fi
+  if [ "$kind" = "native" ] || [ "$kind" = "v2" ]; then echo "locked($kind, label=$(jq -r '.label // "-"' "$lf"), since=$(jq -r '.since // "?"' "$lf"))"; return; fi
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "locked(run=$(jq -r .id "$lf"), pid=$pid)"; else echo "stale-lock(run=$(jq -r .id "$lf"))"; fi
 }
 
@@ -131,11 +131,11 @@ const [stateDir, common] = process.argv.slice(2);
 const alive = pid => { if (!Number.isInteger(pid) || pid < 1) return false; try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 const entries = dir => { try { return fs.readdirSync(dir); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } };
 const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
-const runs = entries(path.join(stateDir, 'runs')).map(id => read(path.join(stateDir, 'runs', id, 'meta.json'))).filter(run => run && run.status === 'running' && alive(run.pid));
+const runs = entries(path.join(stateDir, 'runs')).map(id => read(path.join(stateDir, 'runs', id, 'meta.json'))).filter(run => run && (run.schema_version === 2 ? ['prepared', 'starting', 'running', 'permission', 'cancelling', 'orphaned'].includes(run.status) : run.status === 'running' && alive(run.pid)));
 const counts = { workers: runs.length, writers: runs.filter(run => run.write).length };
 for (const name of entries(path.join(common, 'worktrees'))) {
   const lock = read(path.join(common, 'worktrees', name, 'delegate-kit.lock'));
-  if (lock?.kind === 'native' || (lock && alive(lock.pid) && !runs.some(run => run.id === lock.id || (run.write && run.cwd === lock.cwd)))) {
+  if (lock && !runs.some(run => run.id === lock.id || (run.write && run.cwd === lock.cwd)) && (['native', 'v2'].includes(lock.kind) || alive(lock.pid))) {
     counts.workers += 1;
     counts.writers += 1;
   }
@@ -196,6 +196,7 @@ cmd_release() {
   local force=0; [ "${1:-}" = "--force" ] && force=1
   local lf; lf=$(lock_file "$name") || die "no such worktree: $name"
   [ -f "$lf" ] || { echo "already unlocked"; return; }
+  [ "$(jq -r '.kind // empty' "$lf")" != "v2" ] || die "v2 run owns this worktree; use dk.mjs cancel/recover before release"
   local pid; pid=$(jq -r '.pid // empty' "$lf")
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ $force -eq 0 ]; then die "lock held by live process $pid; use --force after stopping the worker (agent-run kill <id>)"; fi
   # native locks have no process: releasing one is the parent saying its subagent is done
@@ -207,6 +208,7 @@ cmd_remove() {
   local force=0; [ "${1:-}" = "--force" ] && force=1
   local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name"
   local lock; lock=$(lock_info "$name")
+  [[ "$lock" != locked\(v2,* ]] || die "v2 run owns this worktree; use dk.mjs cancel/recover before removal"
   [[ "$lock" == locked* ]] && [ $force -eq 0 ] && die "worktree is $lock; stop the worker first"
   local dirty; dirty=$(cd "$p" && git status --porcelain | wc -l | tr -d ' ')
   [ "$dirty" != "0" ] && [ $force -eq 0 ] && die "worktree has $dirty uncommitted changes; commit/stash or use --force"

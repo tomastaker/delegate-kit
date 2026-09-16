@@ -1,0 +1,100 @@
+{
+  "schema_version": 2,
+  "id": "main",
+  "name": "Main team",
+  "description": "Research, planning, implementation and independent review, with specialists for complex investigations and UI work.",
+  "coordination": "Use researcher for bounded lookups and researcher-hard for investigations with uncertain causes or interacting failures. They are alternatives, not mandatory consecutive steps. Use planner when the approach, dependencies, risks or acceptance checks need to be worked out before implementation. Assign ordinary implementation to implementer and substantial interface work to implementer-ui. Choose reviewer for ordinary changes and reviewer-hard when the cost of failure or impact is high. Reviewers receive the specification and frozen diff without the author conclusions. The coordinator chooses the next step from the evidence; not every task needs every role.",
+  "defaults": {
+    "researcher": "researcher",
+    "planner": "planner",
+    "implementer": "implementer",
+    "reviewer": "reviewer"
+  },
+  "agents": {
+    "researcher": {
+      "role": "researcher",
+      "when": "A bounded lookup: find relevant code, trace a value, identify inputs, existing tests or relevant documentation.",
+      "instructions": "Investigate the assigned question. Return concrete files, symbols, data flows and existing tests with evidence. Keep files unchanged and stay within scope.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-luna",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "read-only"
+    },
+    "researcher-hard": {
+      "role": "researcher",
+      "when": "An investigation across code and external sources: intermittent failures, duplicate charges, repeated requests, idempotency, races, integration failures or error handling.",
+      "instructions": "Build a testable causal explanation. Inspect code, tests, documentation and primary external sources when needed. Check concurrency, retries, transaction boundaries, idempotency and failure paths where relevant. Keep files unchanged. Separate confirmed facts from hypotheses and explain how to resolve remaining uncertainty.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "read-only"
+    },
+    "planner": {
+      "role": "planner",
+      "when": "The approach, sequence, ownership, dependencies, risks or acceptance checks need to be decided before implementation.",
+      "instructions": "Create an actionable plan grounded in the repository. Specify ordered steps, ownership, dependencies, risks, acceptance criteria and concrete checks. Separate blocking questions from optional choices. Keep files unchanged.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-6-astra",
+        "reasoning": "low",
+        "transport": "cli"
+      },
+      "access": "read-only"
+    },
+    "implementer": {
+      "role": "implementer",
+      "when": "Ordinary features, bug fixes, tests and documentation with a clear outcome and scope.",
+      "instructions": "Implement the requested outcome with the smallest complete change in the assigned worktree. Follow project patterns and preserve others' changes. Add a regression test for a fixed bug and run relevant checks.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "workspace-write"
+    },
+    "implementer-ui": {
+      "role": "implementer",
+      "when": "Design or substantially change an interface, components, interactions, responsive behavior or visual styling.",
+      "instructions": "Implement the interface in the assigned worktree using the project components and design system. Verify the affected user flow in the running UI and inspect the rendered result for overlap, clipping and responsive issues. If the executor lacks browser or shell tools, report the exact checks for the coordinator to perform before acceptance. Preserve others' changes.",
+      "executor": {
+        "harness": "omp",
+        "provider": "openrouter",
+        "model": "qwen/qwen3.8-max",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "workspace-write"
+    },
+    "reviewer": {
+      "role": "reviewer",
+      "when": "Independent review of an ordinary change at completion or a checkpoint: requirements, correctness and regression risk.",
+      "instructions": "Review the frozen diff in a fresh context against the specification and repository standards. Treat the author conclusions as claims, not evidence. Report concrete, reproducible problems with location, scenario and impact. Keep files unchanged.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "read-only"
+    },
+    "reviewer-hard": {
+      "role": "reviewer",
+      "when": "Changes with a high cost of failure or broad consequences: payments, authorization, concurrency, migrations, public contracts, security or critical integrations.",
+      "instructions": "Review the frozen diff independently in a fresh context. Check requirements, invariants, negative and concurrent scenarios, compatibility, error recovery and test coverage. Give concrete evidence and impact for each finding. Keep files unchanged.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-6-astra",
+        "reasoning": "high",
+        "transport": "cli"
+      },
+      "access": "read-only"
+    }
+  }
+}

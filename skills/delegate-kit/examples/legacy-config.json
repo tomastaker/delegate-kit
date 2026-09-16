@@ -1,0 +1,57 @@
+{
+  "profiles": {
+    "gpt": {
+      "roles": {
+        "researcher": [
+          { "model": "gpt-5.6-luna", "effort": "high" },
+          { "model": "gpt-6-astra", "effort": "low" }
+        ],
+        "planner": [
+          { "family": "claude", "runner": "claude", "model": "fable", "effort": "high" }
+        ],
+        "implementer": [
+          { "model": "gpt-6-astra", "effort": "low" },
+          { "model": "gpt-6-astra", "effort": "high" }
+        ],
+        "reviewer": [
+          { "family": "claude", "runner": "claude", "model": "opus", "effort": "high" },
+          { "family": "claude", "runner": "claude", "model": "fable", "effort": "high" }
+        ]
+      }
+    },
+    "claude": {
+      "roles": {
+        "researcher": [
+          { "model": "sonnet", "effort": "medium" },
+          { "model": "opus", "effort": "high" }
+        ],
+        "planner": [
+          { "model": "fable", "effort": "high" }
+        ],
+        "implementer": [
+          { "model": "opus", "effort": "medium" },
+          { "model": "opus", "effort": "high" }
+        ],
+        "reviewer": [
+          { "family": "gpt", "runner": "codex", "model": "gpt-6-astra", "effort": "high" }
+        ]
+      }
+    },
+    "kimi": {
+      "roles": {
+        "researcher": [
+          { "runner": "native" }
+        ],
+        "planner": [
+          { "family": "gpt", "runner": "codex", "model": "gpt-6-astra", "effort": "high" }
+        ],
+        "implementer": [
+          { "runner": "native" }
+        ],
+        "reviewer": [
+          { "family": "glm", "runner": "opencode", "model": "YOUR_PROVIDER/YOUR_GLM_MODEL" }
+        ]
+      }
+    }
+  }
+}

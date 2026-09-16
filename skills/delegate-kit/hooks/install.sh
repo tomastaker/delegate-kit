@@ -57,8 +57,10 @@ link_claude_agents() { # symlink the role definitions so edits in the repo take 
     local name; name=$(basename "$src"); local dst="$dir/$name"
     if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then echo "$dst: already linked"; continue; fi
     if [ -e "$dst" ] && [ ! -L "$dst" ]; then
-      echo "$dst exists and is not our symlink"
-      [ $DRY -eq 1 ] || { cp "$dst" "$dst.bak-delegate-kit-$TS"; echo "  backed up to $dst.bak-delegate-kit-$TS"; }
+      echo "refusing to replace unmanaged $dst" >&2; return 1
+    fi
+    if [ -L "$dst" ]; then
+      case "$(readlink "$dst")" in */delegate-kit/agents/dk-*.md) ;; *) echo "refusing to replace unmanaged symlink $dst" >&2; return 1;; esac
     fi
     echo "link $dst -> $src"
     [ $DRY -eq 1 ] || ln -sfn "$src" "$dst"
