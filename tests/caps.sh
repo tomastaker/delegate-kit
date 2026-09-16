@@ -158,16 +158,47 @@ for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" release "$w" >/dev/null 2>&1; done
 for i in 1 2 3 4 5 6 7 8; do ("$WT" lock w1 --label "owner-$i" >/dev/null 2>&1 && touch "$BASE/won-$i") & done; wait
 ok "exactly one successful owner" "$(find "$BASE" -name 'won-*' | wc -l | tr -d ' ')" "1"
 
-echo "── abandoned mutexes with dead PIDs do not block admission"
+echo "── abandoned mutexes fail closed until explicitly recovered"
 for w in w1 w2 w3 w4 w5 w6 w7 w8; do "$WT" release "$w" >/dev/null 2>&1; done
 mkdir -p "$BASE/repo/.git/delegate-kit.caps.lock"; echo 999999 > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
-"$WT" lock w8 --max-writers 8 >/dev/null; ok "agent-wt recovered the stale repository mutex" "$?" "0"
+ERR=$("$WT" lock w8 --max-writers 8 2>&1 >/dev/null); RC=$?
+ok "agent-wt refuses a stale repository mutex" "$RC" "1"
+ok "repository recovery instruction is visible" "$(has "$ERR" "verify no operation is running")" "yes"
+ok "repository mutex is retained for diagnosis" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "held"
+rm -rf "$BASE/repo/.git/delegate-kit.caps.lock"
 echo 999999 > "$DELEGATE_KIT_HOME/caps.lock"
 mkdir -p "$BASE/repo/.git/delegate-kit.caps.lock"; echo 999999 > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
 run "$WTS/w7" --max-writers 1
-ok "agent-run recovered both stale mutexes and reached the capacity check" "$(has "$ERR" "concurrent writers reached")" "yes"
-ok "global mutex released" "$([ -e "$DELEGATE_KIT_HOME/caps.lock" ] && echo held || echo free)" "free"
-ok "repository mutex released" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "free"
+ok "agent-run refuses a stale global mutex" "$RC" "1"
+ok "global recovery instruction is visible" "$(has "$ERR" "verify no operation is running")" "yes"
+ok "global mutex is retained for diagnosis" "$([ -e "$DELEGATE_KIT_HOME/caps.lock" ] && echo held || echo free)" "held"
+ok "repository mutex is retained for diagnosis" "$([ -e "$BASE/repo/.git/delegate-kit.caps.lock" ] && echo held || echo free)" "held"
+rm -f "$DELEGATE_KIT_HOME/caps.lock"
+rm -rf "$BASE/repo/.git/delegate-kit.caps.lock"
+
+echo "── owner publication windows are retried instead of declared stale"
+(
+  : > "$DELEGATE_KIT_HOME/caps.lock"
+  sleep 0.1
+  echo "$$" > "$DELEGATE_KIT_HOME/caps.lock"
+  sleep 0.2
+  rm -f "$DELEGATE_KIT_HOME/caps.lock"
+) &
+while [ ! -e "$DELEGATE_KIT_HOME/caps.lock" ]; do sleep 0.01; done
+"$WT" lock w8 --max-writers 8 >/dev/null
+ok "global empty-to-owned publication is tolerated" "$?" "0"
+"$WT" release w8 >/dev/null
+(
+  mkdir "$BASE/repo/.git/delegate-kit.caps.lock"
+  sleep 0.1
+  echo "$$" > "$BASE/repo/.git/delegate-kit.caps.lock/pid"
+  sleep 0.2
+  rm -rf "$BASE/repo/.git/delegate-kit.caps.lock"
+) &
+while [ ! -d "$BASE/repo/.git/delegate-kit.caps.lock" ]; do sleep 0.01; done
+"$WT" lock w8 --max-writers 8 >/dev/null
+ok "repository empty-to-owned publication is tolerated" "$?" "0"
+"$WT" release w8 >/dev/null
 
 echo "── agent-wt sees an external writer process lock in any linked worktree"
 "$WT" release w8 >/dev/null

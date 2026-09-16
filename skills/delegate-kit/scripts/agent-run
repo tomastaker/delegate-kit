@@ -222,7 +222,13 @@ function acquireCapsMutex(timeoutMs = 15_000) {
   for (;;) {
     try { fs.writeFileSync(CAPS_MUTEX, String(process.pid), { flag: "wx" }); capsMutexHeld = true; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
     let holder; try { holder = Number(fs.readFileSync(CAPS_MUTEX, "utf8").trim() || 0); } catch (e) { if (e.code === "ENOENT") continue; throw e; }
-    if (holder && !alive(holder)) { try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {} continue; }
+    // A competing atomic create may be visible just before its PID write.
+    // Empty ownership is ambiguous until the bounded acquisition window ends.
+    if (!holder) {
+      if (Date.now() > deadline) die(`stale or invalid admission lock ${CAPS_MUTEX}; verify no operation is running, then remove it explicitly before retrying`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); continue;
+    }
+    if (!alive(holder)) die(`stale or invalid admission lock ${CAPS_MUTEX}; verify no operation is running, then remove it explicitly before retrying`);
     if (Date.now() > deadline) die(`another agent-run (pid ${holder}) has held ${CAPS_MUTEX} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the file`);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
@@ -242,14 +248,25 @@ function acquireRepoMutex(cwd, timeoutMs = 15_000) {
   for (;;) {
     try { fs.mkdirSync(dir); fs.writeFileSync(path.join(dir, "pid"), String(process.pid)); repoMutexHeld = dir; return; } catch (e) { if (e.code !== "EEXIST") throw e; }
     let holder = 0; try { holder = Number(fs.readFileSync(path.join(dir, "pid"), "utf8").trim() || 0); } catch {}
-    if (holder && !alive(holder)) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} continue; }
+    if (!holder) {
+      if (Date.now() > deadline) die(`stale or invalid repository admission lock ${dir}; verify no operation is running, then remove it explicitly before retrying`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); continue;
+    }
+    if (!alive(holder)) die(`stale or invalid repository admission lock ${dir}; verify no operation is running, then remove it explicitly before retrying`);
     if (Date.now() > deadline) die(`another agent-run or agent-wt (pid ${holder}) has held ${dir} for ${timeoutMs / 1000}s; if it is stuck, kill it or remove the directory`);
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   }
 }
 function releaseCapsMutex() {
-  if (repoMutexHeld) { const d = repoMutexHeld; repoMutexHeld = null; try { fs.rmSync(d, { recursive: true, force: true }); } catch {} }
-  if (!capsMutexHeld) return; capsMutexHeld = false; try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {}
+  if (repoMutexHeld) {
+    const d = repoMutexHeld; repoMutexHeld = null;
+    let owner = 0; try { owner = Number(fs.readFileSync(path.join(d, 'pid'), 'utf8')); } catch {}
+    if (owner === process.pid) try { fs.rmSync(d, { recursive: true, force: true }); } catch {}
+  }
+  if (!capsMutexHeld) return;
+  capsMutexHeld = false;
+  let owner = 0; try { owner = Number(fs.readFileSync(CAPS_MUTEX, 'utf8')); } catch {}
+  if (owner === process.pid) try { fs.rmSync(CAPS_MUTEX, { force: true }); } catch {}
 }
 
 // Refuse before anything is spawned. Native locks (`agent-wt lock`) of the repository of

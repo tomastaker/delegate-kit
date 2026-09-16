@@ -11,11 +11,12 @@ For assignments that intentionally depended on the parent, supply a decisions fi
 ```json
 {
   "parents": { "gpt": "codex", "claude": "claude" },
+  "authors": { "gpt": "codex", "claude": "claude" },
   "default_preset": "gpt"
 }
 ```
 
-For auto/native family assignments, a matching explicit parent determines the original harness. Multiple harnesses in one family require that choice rather than selecting the first backend. These mappings are explicit user decisions; team names themselves have no routing meaning. A missing default remains unset. If other ambiguities remain, use conversational setup to construct and validate the intended complete v2 JSON from the dry-run output. Keep the original legacy file unchanged as evidence; the automatic converter deliberately refuses to invent missing models or translate preferences into specialties.
+For auto/native family assignments, a matching explicit parent determines the original harness. Legacy reviewer/verifier backend maps also require `authors.PRESET`, because duo routing may deliberately choose a different family from the author. Multiple harnesses in one family require an explicit choice rather than selecting the first backend. These mappings are explicit user decisions; team names themselves have no routing meaning. A missing default remains unset. If other ambiguities remain, use conversational setup to construct and validate the intended complete v2 JSON from the dry-run output. Keep the original legacy file unchanged as evidence; the automatic converter deliberately refuses to invent missing models or translate preferences into specialties.
 
 After user authorization, `migrate --apply --decisions FILE` backs up the exact old config, saves complete presets atomically per file, and records `migration-v2.json`. It refuses existing destinations/settings instead of overwriting them. A completed migration is idempotent and preserves later v2 edits. If a process crashes during a multi-file apply before the journal is saved, rerun dry-run and inspect the backup/proposed files; an existing destination is a recovery diagnostic, never permission to overwrite.
 

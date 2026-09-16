@@ -24,6 +24,8 @@ Clarify the requested result, constraints and acceptance checks. Consider substa
 
 Parallel writers need disjoint ownership and stable interfaces. Coupled changes have one owner or proceed sequentially. Choose worker count from ready outcomes and integration capacity; there is no default cap of one. Honor explicit user and host limits. Do independent work while workers run; avoid duplicating their investigation.
 
+Choose worker count for quality and elapsed time within explicit cost and capacity limits, not a default of one. Parallelize distinct ready outcomes with clear ownership; keep coupled work under one owner or staged dependencies. State the count and each worker's distinct value.
+
 ## Prepare and dispatch
 
 Use [brief-template.md](references/brief-template.md): outcome, necessary facts, scope, workspace, constraints, checks and authorized finishing actions. Workers should begin from the brief and repository without the parent's full conversation. `when` and coordination instructions belong to you; profile `instructions` and the brief go to the worker.
@@ -34,9 +36,11 @@ Prepare with the saved session, stable task ID, selected profile and brief. The 
 
 `run` starts a CLI supervisor or returns the verified native/Paseo invocation. A bridge invocation is preparation, not an agent: call the actual host tool once and attach its returned ID. If dispatch outcome is uncertain, reconcile with the host before another call. Record correlated completion/permission events. Unique Claude native definitions must be discovered by that host; otherwise use CLI. Never rewrite a shared role when switching presets.
 
+Status reporting is on by default. Read [observability.md](references/observability.md) and announce planned profiles/executors. Combine immediate preparation and dispatch into one runtime-backed launch update; report prepared separately only on delay, failure or user action. Prepared is not running.
+
 ## Await and verify results
 
-Use host completion notifications or runtime `wait`. Read the compact result by default; full private logs are diagnostic artifacts. No log-summarizer model or periodic LLM heartbeat is needed. After each bounded wait, check runtime health or query the saved host agent without sending a prompt. A wait timeout does not stop the worker or authorize a duplicate. An attention alert requires diagnosis of process/turn progress; continue waiting only with a concrete reason, or stop/recover a confirmed stall. See [lifecycle and recovery](references/routing.md#lifecycle-and-recovery). Intervene for a blocker, permission request, user correction, explicit failure, breached limit or data risk.
+Use host completion notifications or runtime `watch`; use `wait` for one run. Read compact results; reserve `watch --full` and logs for diagnosis. Report meaningful transitions as one-line rows. On an unchanged 60-second timeout, send at most one aggregate heartbeat if otherwise silent; do not repeat the roster or models. No log-summarizer model is needed. Check runtime health or query the saved host agent without prompting. A timeout neither stops the worker nor authorizes a duplicate. Diagnose attention alerts; keep waiting only for a concrete reason, or recover a confirmed stall. See [lifecycle and recovery](references/routing.md#lifecycle-and-recovery). Intervene for blockers, permission requests, corrections, failures, breached limits or data risk.
 
 Transport acknowledgement, terminal turn, valid result and coordinator acceptance are separate. Compare evidence against acceptance checks, run relevant checks the adapter could not perform, and accept only completed work. Explain unverified claims. Runtime `accept` refuses incomplete required review sets; it records your judgment, not proof that tests passed.
 

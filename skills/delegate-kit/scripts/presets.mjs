@@ -85,6 +85,7 @@ export function validatePreset(preset) {
         check(target !== id && Object.hasOwn(preset.agents, target), `${at}.review: invalid reference ${target}`);
         check(preset.agents[target].role === 'reviewer' && accessOf(preset.agents[target]) === 'read-only', `${at}.review: ${target} must be a read-only reviewer`);
       }
+      check(agent.role === 'reviewer' && accessOf(agent) === 'read-only', `${at}.review.also_run is only for a read-only reviewer set over the same frozen material`);
     }
   }
   if (preset.defaults !== undefined) {
