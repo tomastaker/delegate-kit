@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readConfig, backendTable } from './routing.mjs';
+import { readConfig, backendTable, resolve as resolveLegacy } from './routing.mjs';
 import { home, hash, check, locked, atomicJSON, readJSON, validatePreset, presetFiles } from './presets.mjs';
 
 // Parent-dependent assignments are resolved only from an explicit migration
@@ -17,8 +17,26 @@ export function migrationPlan(decisions = {}, root = home()) {
     const assignments = { ...legacy.roles, ...profile.roles };
     for (const [role, assignment] of Object.entries(assignments)) {
       const candidateKeys = ['model', 'effort', 'family', 'runner', 'backend', 'efforts'];
-      const candidates = Array.isArray(assignment) ? assignment : candidateKeys.some(key => Object.hasOwn(assignment, key))
-        ? [assignment] : Object.entries(assignment).map(([backend, pair]) => ({ backend, model: pair[0], effort: pair[1] || undefined }));
+      const backendMap = !Array.isArray(assignment) && !candidateKeys.some(key => Object.hasOwn(assignment, key));
+      if (backendMap && !parent) { issues.push(`${id}.${role}: legacy backend map needs an explicit parents.${id} decision before choosing its default`); continue; }
+      const needsAuthor = ['reviewer', 'verifier'].includes(role);
+      const author = decisions.authors?.[id];
+      if (backendMap && needsAuthor && !author) { issues.push(`${id}.${role}: legacy reviewer routing needs an explicit authors.${id} backend decision`); continue; }
+      let selectedBackend = parent, selectedRoute = null;
+      if (backendMap) {
+        try {
+          selectedRoute = resolveLegacy({ parent, role, ...(needsAuthor ? { 'author-backend': author } : {}), ...(legacy.profiles?.[id] ? { profile: id } : {}) }, legacy, {}, () => true);
+          selectedBackend = selectedRoute.backend;
+        } catch (error) { issues.push(`${id}.${role}: cannot preserve legacy default: ${error.message}`); continue; }
+      }
+      let candidates = Array.isArray(assignment) ? assignment : !backendMap ? [assignment]
+        : Object.entries(assignment).map(([backend, pair]) => ({ backend, model: pair[0], effort: pair[1] || undefined }));
+      if (backendMap) {
+        if (!candidates.some(candidate => candidate.backend === selectedBackend)) {
+          candidates.push({ backend: selectedBackend, model: selectedRoute.model, effort: selectedRoute.effort || undefined });
+        }
+        candidates.sort((a, b) => Number(b.backend === selectedBackend) - Number(a.backend === selectedBackend));
+      }
       candidates.forEach((c, i) => {
         const at = `${id}.${role}[${i + 1}]`;
         const backend = c.backend || (c.family ? Object.keys(table).find(b => table[b].family === c.family && (!c.runner || ['auto', 'native'].includes(c.runner) || table[b].adapter === c.runner)) : parent);

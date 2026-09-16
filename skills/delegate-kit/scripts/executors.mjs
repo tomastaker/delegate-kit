@@ -41,6 +41,7 @@ export function resolveExecutor(agent, capabilities = [], available = () => true
     check(host.transport !== 'native' || host.host !== 'claude' || host.dynamic_roles === true, 'Claude native requires verified discovery of per-run role definitions; use CLI if a restart is required');
     check(host.launch_provider === undefined || host.launch_provider === e.harness, 'Paseo launch provider cannot replace the selected harness');
     check(host.transport !== 'paseo' || host.daemon, 'Paseo capability evidence needs a stable daemon identifier');
+    check(host.transport !== 'paseo' || typeof host.mode_ids?.[access] === 'string' && host.mode_ids[access].length > 0, `Paseo capability evidence needs a mode enforcing ${access}`);
     return { ...e, model: e.inherit_model ? host.current_model : e.model, transport: host.transport, access, capability: host, actual_model: null };
   }
   check(desired === 'auto' || desired === 'cli', `${desired} cannot preserve ${e.harness} model/provider/reasoning/access; supply verified host capabilities or choose CLI explicitly`);

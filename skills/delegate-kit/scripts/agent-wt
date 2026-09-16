@@ -23,8 +23,8 @@ STATE_DIR="${DELEGATE_KIT_HOME:-$HOME/.delegate-kit}"
 CAPS_MUTEX=""
 GLOBAL_CAPS_MUTEX=""
 release_caps_mutex() {
-  [ -n "$CAPS_MUTEX" ] && rm -rf "$CAPS_MUTEX"; CAPS_MUTEX=""
-  [ -n "$GLOBAL_CAPS_MUTEX" ] && rm -f "$GLOBAL_CAPS_MUTEX"; GLOBAL_CAPS_MUTEX=""
+  if [ -n "$CAPS_MUTEX" ] && [ "$(cat "$CAPS_MUTEX/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$CAPS_MUTEX"; fi; CAPS_MUTEX=""
+  if [ -n "$GLOBAL_CAPS_MUTEX" ] && [ "$(cat "$GLOBAL_CAPS_MUTEX" 2>/dev/null || true)" = "$$" ]; then rm -f "$GLOBAL_CAPS_MUTEX"; fi; GLOBAL_CAPS_MUTEX=""
 }
 trap release_caps_mutex EXIT
 die() { echo "agent-wt: $*" >&2; exit 1; }
@@ -117,9 +117,12 @@ acquire_global_caps_mutex() {
   for _ in $(seq 1 300); do
     if (set -o noclobber; echo "$$" > "$file") 2>/dev/null; then GLOBAL_CAPS_MUTEX="$file"; return; fi
     pid=$(cat "$file" 2>/dev/null || true)
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -f "$file"; continue; fi
+    # noclobber may expose the new file just before its PID payload is visible.
+    [ -z "$pid" ] && { sleep 0.05; continue; }
+    if ! kill -0 "$pid" 2>/dev/null; then die "stale or invalid admission lock $file; verify no operation is running, then remove it explicitly before retrying"; fi
     sleep 0.05
   done
+  [ -n "${pid:-}" ] || die "stale or invalid admission lock $file; verify no operation is running, then remove it explicitly before retrying"
   die "another worker has held $file for 15s; verify the owner before removing a stale lock"
 }
 known_workers() {
@@ -151,9 +154,11 @@ acquire_caps_mutex() {
   for _ in $(seq 1 300); do
     if mkdir "$d" 2>/dev/null; then echo "$$" > "$d/pid"; CAPS_MUTEX="$d"; return; fi
     local pid; pid=$(cat "$d/pid" 2>/dev/null || true)
-    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$d"; continue; fi
+    [ -z "$pid" ] && { sleep 0.05; continue; }
+    if ! kill -0 "$pid" 2>/dev/null; then die "stale or invalid repository admission lock $d; verify no operation is running, then remove it explicitly before retrying"; fi
     sleep 0.05
   done
+  [ -n "${pid:-}" ] || die "stale or invalid repository admission lock $d; verify no operation is running, then remove it explicitly before retrying"
   die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
 }
 cmd_lock() {

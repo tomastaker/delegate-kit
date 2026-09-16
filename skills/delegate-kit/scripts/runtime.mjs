@@ -16,6 +16,8 @@ const schema = readJSON(path.join(skill, 'references/result-schema.json'));
 const active = ['prepared', 'starting', 'running', 'permission', 'cancelling', 'orphaned'];
 const terminal = ['finished', 'failed', 'cancelled', 'timeout', 'blocked'];
 const now = () => new Date().toISOString();
+const lockTimeout = () => process.env.NODE_ENV === 'test' && Number.isSafeInteger(Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS)) && Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS) > 0
+  ? Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS) : 15000;
 function diagnostic(message) {
   let text = String(message);
   for (const [key, value] of Object.entries(process.env)) {
@@ -58,7 +60,7 @@ function admission(fn) {
   fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
   const mutex = path.join(home(), 'caps.lock'), temp = `${mutex}.${randomUUID()}`;
   fs.writeFileSync(temp, String(process.pid), { mode: 0o600 });
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + lockTimeout();
   try {
     for (;;) {
       try { fs.linkSync(temp, mutex); break; }
@@ -66,13 +68,62 @@ function admission(fn) {
         if (error.code !== 'EEXIST') throw error;
         let pid;
         try { pid = Number(fs.readFileSync(mutex, 'utf8')); } catch (e) { if (e.code === 'ENOENT') continue; throw e; }
-        if (pid && !alive(pid)) { fs.rmSync(mutex, { force: true }); continue; }
+        if (!pid) {
+          check(Date.now() < deadline, `Admission lock has no published owner: ${mutex}; verify no operation is running, then remove it explicitly before retrying`);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25); continue;
+        }
+        check(alive(pid), `Admission lock is stale or invalid: ${mutex}; verify no operation is running, then remove it explicitly before retrying`);
         check(Date.now() < deadline, 'Admission lock held; wait or verify its owner before recovery');
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
       }
     }
-    try { return fn(); } finally { fs.rmSync(mutex, { force: true }); }
+    try { return fn(); } finally {
+      let owner = null; try { owner = Number(fs.readFileSync(mutex, 'utf8')); } catch {}
+      if (owner === process.pid) fs.rmSync(mutex, { force: true });
+    }
   } finally { fs.rmSync(temp, { force: true }); }
+}
+
+// Writer ownership is repository-global, while DELEGATE_KIT_HOME may differ
+// between coordinators. The path, mkdir protocol and lock order are shared with
+// agent-run and agent-wt: state mutex first, repository second. Readers tolerate
+// the bounded mkdir-to-PID publication window but never steal an unknown owner.
+function repositoryAdmission(cwd, fn) {
+  if (!cwd) return fn();
+  const common = git(cwd, ['rev-parse', '--git-common-dir']);
+  check(common.status === 0, 'Cannot resolve repository admission lock');
+  const target = path.join(path.resolve(cwd, common.stdout.trim()), 'delegate-kit.caps.lock');
+  const deadline = Date.now() + lockTimeout();
+  let created = false, owned = false;
+  try {
+    for (;;) {
+      try {
+        fs.mkdirSync(target, { mode: 0o700 });
+        created = true;
+        fs.writeFileSync(path.join(target, 'pid'), String(process.pid), { mode: 0o600 });
+        owned = true; break;
+      }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        let holder = 0;
+        try { holder = Number(fs.readFileSync(path.join(target, 'pid'), 'utf8')); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+        if (!holder) {
+          check(Date.now() < deadline, `Repository admission lock has no published owner: ${target}; verify no operation is running, then remove it explicitly before retrying`);
+        } else {
+          check(alive(holder), `Repository admission lock is stale: ${target}; verify no operation is running, then remove it explicitly before retrying`);
+          check(Date.now() < deadline, `Repository admission lock held by ${holder}; wait or verify its owner before recovery`);
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      }
+    }
+    try { return fn(); } finally {
+      let owner = 0; try { owner = Number(fs.readFileSync(path.join(target, 'pid'), 'utf8')); } catch {}
+      if (owned && owner === process.pid) fs.rmSync(target, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if (created && !owned) fs.rmSync(target, { recursive: true, force: true });
+    throw error;
+  }
 }
 function workspace(cwd, write, external) {
   if (external) {
@@ -147,41 +198,42 @@ export function prepare(options) {
     return { schema_version: 2, id: run, parent_session: options.session, task: options.task,
       budget_task: hash(`${options.session}\0${options.task}`), preset: p.id, preset_hash: selected.revision,
       profile, agent, executor, workspace: ws, cwd: ws.path, write: accessOf(agent) === 'workspace-write', role: agent.role,
-      limits: caps, timeout_ms: options.timeoutMs || null, stall_ms: options.stallMs ?? 300000, group, required_profiles: ids, status: 'prepared', created: now(), resume_of: null,
-      host_attached: false, transport_session_id: null, transport_session_file: null, actual_model: null, usage: null, cost_usd: null,
+      limits: caps, timeout_ms: options.timeoutMs || null, stall_ms: options.stallMs ?? 300000, group, required_profiles: ids, status: 'prepared', created: now(), resume_of: null, attempt_sequence: 1,
+      host_attached: false, execution_started_at: null, launch_registration_pending: false, transport_session_id: null, transport_session_file: null, actual_model: null, usage: null, cost_usd: null,
       result_validated: false, accepted: false, attempt_kind: 'fresh', pid: null };
   });
-  return admission(() => {
+  return admission(() => repositoryAdmission(rows.find(m => m.write && m.workspace.owner === 'delegate-kit')?.cwd, () => {
     enforceCaps(caps, counts(rows[0].workspace.owner === 'delegate-kit' ? rows[0].cwd : null), { workers: rows.length, writers: rows.filter(m => m.write).length });
     const before = budget({ stateDir: home(), task: rows[0].budget_task, limits: caps });
     check(caps.runs === null || before.runs + rows.length <= caps.runs, `Required review set exceeds max ${caps.runs} runs`);
     const reserved = [];
     try {
+      // Burn attempt budget before any dispatchable metadata is published. A
+      // crash may conservatively consume an attempt, but can never create an
+      // uncounted prepared run that launch would accept.
+      for (const m of rows) m.budget = budget({ stateDir: home(), task: m.budget_task, record: true, limits: caps });
       for (const m of rows) {
         reserveWriter(m); reserved.push(m);
         atomicJSON(path.join(dir(m.id), 'preset.snapshot.json'), p);
         fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 });
         save(m);
       }
-      // Reservations count once, including failed dispatch. Cancel releases capacity,
-      // but not the attempt limit; a crash can never create a free retry.
-      for (const m of rows) {
-        m.budget = budget({ stateDir: home(), task: m.budget_task, record: true, limits: caps }); save(m);
-      }
     } catch (error) {
       for (const m of reserved) { m.status = 'failed'; m.error = error.message; save(m); releaseWriter(m); }
       throw error;
     }
     return { group, runs: rows.map(compact) };
-  });
+  }));
 }
 export function compact(m) {
   const { capability, ...executor } = m.executor;
-  return { id: m.id, parent_session: m.parent_session, task: m.task, preset: m.preset, profile: m.profile,
-    executor: { ...executor, ...(capability ? { host: capability.host, version: capability.version } : {}) }, status: m.status, attempt_kind: m.attempt_kind, resume_of: m.resume_of,
+  return { id: m.id, parent_session: m.parent_session, task: m.task, preset: m.preset, profile: m.profile, role: m.role, write: m.write,
+    executor: { ...executor, ...(capability ? { host: capability.host, version: capability.version } : {}) }, status: m.status, attempt_kind: m.attempt_kind, resume_of: m.resume_of, attempt_sequence: m.attempt_sequence || null,
     dispatch_token: m.claim || null, transport_session_id: m.transport_session_id, workspace: m.workspace, actual_model: m.actual_model,
+    launch_registration_pending: Boolean(m.launch_registration_pending),
     result_validated: m.result_validated, accepted: m.accepted, result: m.result || null, error: m.error || null,
-    group: m.group, required_profiles: m.required_profiles, logs: dir(m.id), usage: m.usage, cost_usd: m.cost_usd };
+    group: m.group, required_profiles: m.required_profiles, created: m.created, started: m.started || null, execution_started: executionStarted(m), execution_started_at: m.execution_started_at || null, finished: m.finished || null,
+    logs: dir(m.id), usage: m.usage, cost_usd: m.cost_usd };
 }
 function health(m) {
   if (!active.includes(m.status) || m.status === 'prepared') return { state: 'inactive', attention_required: false };
@@ -206,14 +258,171 @@ function health(m) {
     ...(idle >= stale ? { action_required: 'Process is alive but output has not advanced. Inspect logs/process activity; choose a justified observation interval or cancel after diagnosis. Do not blindly repeat wait or duplicate the worker.' } : {}) };
 }
 export function status(id) {
-  return admission(() => {
-    const m = getRun(id);
-    if (m.executor.transport === 'cli' && ['running', 'starting', 'cancelling'].includes(m.status) && m.pid && !sameProcess(m.pid, m.pid_fingerprint)) {
-      m.status = 'orphaned'; m.error = 'Supervisor identity is gone; inspect logs and use recover after verifying process termination'; save(m);
+  return admission(() => statusUnlocked(id));
+}
+
+function statusUnlocked(id) {
+  const m = getRun(id);
+  if (m.executor.transport === 'cli' && ['running', 'starting', 'cancelling'].includes(m.status) && m.pid && !sameProcess(m.pid, m.pid_fingerprint)) {
+    m.status = 'orphaned'; m.error = 'Supervisor identity is gone; inspect logs and use recover after verifying process termination'; save(m);
+  }
+  return { ...compact(m), health: health(m) };
+}
+
+function executionStarted(run) {
+  if (run.execution_started === true) return true;
+  if (run.execution_started_at) return true;
+  if (run.executor.transport === 'cli') return Boolean(run.child_pid);
+  return run.host_attached === true;
+}
+
+function currentAttempts(runs) {
+  const byId = new Map(runs.map(run => [run.id, run]));
+  const rootOf = run => {
+    let current = run, root = run.id;
+    const seen = new Set([run.id]);
+    while (current.resume_of && byId.has(current.resume_of) && !seen.has(current.resume_of)) {
+      root = current.resume_of; seen.add(root); current = byId.get(root);
     }
-    return { ...compact(m), health: health(m) };
+    return root;
+  };
+  const groups = new Map();
+  for (const run of runs) {
+    const root = rootOf(run);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(run);
+  }
+  const latest = [];
+  for (const group of groups.values()) {
+    const parents = new Set(group.map(run => run.resume_of).filter(id => byId.has(id)));
+    const leaves = group.filter(run => !parents.has(run.id));
+    leaves.sort((a, b) => (Number(a.attempt_sequence) || 0) - (Number(b.attempt_sequence) || 0) ||
+      String(a.created).localeCompare(String(b.created)) || a.id.localeCompare(b.id));
+    latest.push(leaves.at(-1));
+  }
+  return latest.sort((a, b) => String(a.created).localeCompare(String(b.created)) || a.id.localeCompare(b.id));
+}
+
+function stageOf(runs) {
+  if (!runs.length) return 'idle';
+  if (runs.every(run => terminal.includes(run.status))) return 'complete';
+  const working = runs.filter(run => executionStarted(run) && ['running', 'permission', 'cancelling', 'orphaned'].includes(run.status));
+  if (!working.length) return 'preparation';
+  const roles = new Set(working.map(run => run.role));
+  if (roles.has('reviewer') || roles.has('verifier') || roles.has('review-lead')) return 'review';
+  if (roles.has('implementer')) return 'implementation';
+  if (roles.has('planner')) return 'planning';
+  if (roles.has('researcher')) return 'research';
+  return 'coordination';
+}
+
+export function overview({ session, task } = {}) {
+  check(typeof session === 'string' && session.length > 0, 'overview requires --session');
+  if (task !== undefined) identifier(task, 'task');
+  return admission(() => {
+    const selected = allRuns().filter(run => run.schema_version === 2 && run.parent_session === session && (task === undefined || run.task === task));
+    const attempts = selected.map(run => statusUnlocked(run.id));
+    const runs = currentAttempts(attempts);
+    const statuses = Object.fromEntries([...active, ...terminal].map(name => [name, runs.filter(run => run.status === name).length]));
+    const activeStates = new Set(active);
+    const attention = runs.filter(run => run.health?.attention_required || ['permission', 'orphaned', 'blocked', 'failed', 'timeout'].includes(run.status)).length;
+    const summary = {
+      agents: runs.length,
+      attempts: attempts.length,
+      reserved: statuses.prepared,
+      started: runs.filter(executionStarted).length,
+      active: runs.filter(run => activeStates.has(run.status)).length,
+      working: runs.filter(run => run.status === 'running' && executionStarted(run)).length,
+      completed: statuses.finished,
+      accepted: runs.filter(run => run.accepted).length,
+      attention,
+      statuses,
+    };
+    const agents = runs.map(run => ({
+      id: run.id,
+      profile: run.profile,
+      role: run.role,
+      status: run.status,
+      health: run.health,
+      harness: run.executor.harness,
+      transport: run.executor.transport,
+      provider: run.executor.provider || null,
+      requested_model: run.executor.model,
+      actual_model: run.actual_model || null,
+      attempt_kind: run.attempt_kind,
+      attempt_sequence: run.attempt_sequence,
+      resume_of: run.resume_of,
+      accepted: run.accepted,
+      dispatch_started: run.started,
+      execution_started: executionStarted(run),
+      execution_started_at: run.execution_started_at,
+      finished: run.finished,
+    }));
+    const cursor = hash(JSON.stringify(agents.map(agent => ({
+      id: agent.id, status: agent.status, health: agent.health?.state, attention: agent.health?.attention_required,
+      actual_model: agent.actual_model, accepted: agent.accepted, execution_started: agent.execution_started,
+    }))));
+    const presets = [...new Set(runs.map(run => run.preset))].sort();
+    return { session, task: task || null, presets, stage: stageOf(runs), cursor, observed_at: now(), summary, agents };
   });
 }
+
+function statusIcon(agent) {
+  if (agent.health?.attention_required || ['permission', 'orphaned', 'blocked', 'failed', 'timeout'].includes(agent.status)) return '🔴';
+  if (agent.status === 'running' && agent.execution_started) return '🟢';
+  if (agent.accepted) return '🟢';
+  return '🟡';
+}
+
+function compactSnapshot(snapshot) {
+  const icon = snapshot.summary.attention > 0 ? '🔴'
+    : snapshot.summary.working > 0 || (snapshot.summary.agents > 0 && snapshot.summary.accepted === snapshot.summary.agents) ? '🟢'
+      : '🟡';
+  return {
+    session: snapshot.session,
+    task: snapshot.task,
+    stage: snapshot.stage,
+    cursor: snapshot.cursor,
+    summary: {
+      icon,
+      agents: snapshot.summary.agents,
+      reserved: snapshot.summary.reserved,
+      started: snapshot.summary.started,
+      working: snapshot.summary.working,
+      completed: snapshot.summary.completed,
+      accepted: snapshot.summary.accepted,
+      attention: snapshot.summary.attention,
+    },
+    agents: snapshot.agents.map(agent => ({
+      icon: statusIcon(agent),
+      id: agent.id,
+      profile: agent.profile,
+      role: agent.role,
+      status: agent.status,
+      health: agent.health?.state || null,
+      attention: Boolean(agent.health?.attention_required),
+      actual_model: agent.actual_model,
+      execution_started: agent.execution_started,
+      accepted: agent.accepted,
+    })),
+  };
+}
+
+export async function watch({ session, task, after, milliseconds = 60000, full = false } = {}) {
+  check(Number.isSafeInteger(milliseconds) && milliseconds > 0, 'watch requires a positive timeout');
+  const deadline = Date.now() + milliseconds;
+  for (;;) {
+    const snapshot = overview({ session, task });
+    const result = full ? snapshot : compactSnapshot(snapshot);
+    if (!after || snapshot.cursor !== after) return { ...result, changed: true };
+    if (Date.now() >= deadline) {
+      if (!full) return { session: result.session, task: result.task, stage: result.stage, cursor: result.cursor, summary: result.summary, changed: false, watch_timed_out: true };
+      return { ...result, changed: false, watch_timed_out: true };
+    }
+    await sleep(Math.min(1000, deadline - Date.now()));
+  }
+}
+
 export async function wait(id, milliseconds = 60000) {
   check(Number.isFinite(milliseconds) && milliseconds > 0, 'wait requires a positive timeout');
   const deadline = Date.now() + milliseconds;
@@ -253,7 +462,7 @@ export function attach(id, transportId, workspaceId) {
     check(!m.transport_session_id || m.transport_session_id === transportId, 'Resume must attach the original agent');
     if (m.executor.transport === 'paseo') check(workspaceId === m.workspace.id, 'Paseo returned a different workspace; reconcile before proceeding');
     check(!allRuns().some(r => r.id !== id && active.includes(r.status) && r.executor?.transport === m.executor.transport && r.executor?.capability?.daemon === m.executor.capability?.daemon && r.transport_session_id === transportId), 'Host agent already belongs to another active attempt');
-    m.transport_session_id = transportId; m.host_attached = true; if (m.status !== 'cancelling') m.status = 'running'; m.host_checked_at = now(); m.progress_at ||= m.started; save(m); return compact(m);
+    m.transport_session_id = transportId; m.host_attached = true; m.execution_started_at ||= now(); if (m.status !== 'cancelling') m.status = 'running'; m.host_checked_at = now(); m.progress_at ||= m.started; save(m); return compact(m);
   });
 }
 function resultFrom(text) {
@@ -315,17 +524,21 @@ export function resume(id, briefFile) {
     check(!allRuns().some(r => active.includes(r.status) && r.parent_session === prev.parent_session && r.transport_session_id === prev.transport_session_id), 'An attempt already owns this executor session');
     if (prev.executor.transport === 'cli' && ['pi', 'omp'].includes(prev.executor.harness)) check(prev.transport_session_file && fs.existsSync(prev.transport_session_file), 'Saved RPC session file is unavailable; do not resume a prefix or last session');
     assertWorkspaceBinding(prev.executor, prev.cwd);
-    enforceCaps(prev.limits, counts(prev.workspace.owner === 'delegate-kit' ? prev.cwd : null), { workers: 1, writers: prev.write ? 1 : 0 });
-    const m = { ...prev, id: randomUUID(), status: 'prepared', created: now(), started: null, finished: null, error: null,
+    const attemptSequence = Math.max(0, ...allRuns().filter(run => run.group === prev.group && run.profile === prev.profile).map(run => Number(run.attempt_sequence) || 0)) + 1;
+    const m = { ...prev, id: randomUUID(), status: 'prepared', created: now(), started: null, execution_started_at: null, finished: null, error: null,
       resume_of: id, result: null, result_validated: false, accepted: false, attempt_kind: 'continuation', pid: null,
-      pid_fingerprint: null, child_pid: null, child_fingerprint: null, usage: null, cost_usd: null, claim: null, invoke: null, host_attached: false, host_checked_at: null, progress_at: null, progress_cursor: null };
-    reserveWriter(m);
-    try {
-      m.budget = budget({ stateDir: home(), task: m.budget_task, ticket: m.profile, retry: true, record: true, limits: m.limits });
-      atomicJSON(path.join(dir(m.id), 'preset.snapshot.json'), readJSON(path.join(dir(id), 'preset.snapshot.json')));
-      fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 }); save(m);
-    } catch (e) { releaseWriter(m); throw e; }
-    return compact(m);
+      attempt_sequence: attemptSequence, pid_fingerprint: null, child_pid: null, child_fingerprint: null, actual_model: null, actual_provider: null,
+      usage: null, cost_usd: null, claim: null, invoke: null, host_attached: false, host_checked_at: null, progress_at: null, progress_cursor: null, launch_registration_pending: false, launch_recovery_evidence: null };
+    return repositoryAdmission(m.write && m.workspace.owner === 'delegate-kit' ? m.cwd : null, () => {
+      enforceCaps(prev.limits, counts(prev.workspace.owner === 'delegate-kit' ? prev.cwd : null), { workers: 1, writers: prev.write ? 1 : 0 });
+      reserveWriter(m);
+      try {
+        m.budget = budget({ stateDir: home(), task: m.budget_task, ticket: m.profile, retry: true, record: true, limits: m.limits });
+        atomicJSON(path.join(dir(m.id), 'preset.snapshot.json'), readJSON(path.join(dir(id), 'preset.snapshot.json')));
+        fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 }); save(m);
+      } catch (e) { releaseWriter(m); throw e; }
+      return compact(m);
+    });
   });
 }
 export async function cancel(id) {
@@ -352,10 +565,15 @@ export async function cancel(id) {
   }
   return { ...compact(m), action_required: 'Waiting for process termination; ownership is retained' };
 }
-export function recover(id) {
+export function recover(id, { confirmedNotStarted = false, evidence } = {}) {
   return admission(() => {
     const m = getRun(id);
     check(m.executor.transport === 'cli', 'Native recovery requires a correlated host completion event');
+    if (m.launch_registration_pending) {
+      check(confirmedNotStarted === true && typeof evidence === 'string' && evidence.trim(), 'Child registration was interrupted; retain ownership until process inspection confirms no worker started, then provide evidence');
+      m.launch_recovery_evidence = diagnostic(evidence);
+      m.launch_registration_pending = false;
+    }
     check(!sameProcess(m.pid, m.pid_fingerprint) && !groupAlive(m.child_pid), 'Supervisor or child group may still be writing; ownership retained');
     if (!terminal.includes(m.status)) finish(m, null, 'Recovered stopped run; inspect partial changes before continuation', m.status === 'cancelling' ? 'cancelled' : 'failed');
     return compact(m);
@@ -366,8 +584,10 @@ export function accept(id) {
     const m = getRun(id); check(m.status === 'finished' && m.result_validated && m.result.status === 'done', 'Only a validated done result can be accepted');
     const group = allRuns().filter(r => r.group === m.group);
     for (const profile of m.required_profiles) {
-      const attempts = group.filter(r => r.profile === profile).sort((a, b) => a.created.localeCompare(b.created));
-      const latest = attempts.at(-1);
+      const attempts = group.filter(r => r.profile === profile);
+      const current = currentAttempts(attempts);
+      check(current.length === 1, `Required profile ${profile} has ambiguous attempt lineages`);
+      const latest = current[0];
       check(latest?.status === 'finished' && latest.result_validated && latest.result?.status === 'done' && !attempts.some(r => active.includes(r.status)), `Required profile ${profile} has not completed its latest attempt validly`);
       if (profile === m.profile) check(latest.id === m.id, 'Accept the latest attempt, not an earlier result');
     }
@@ -386,7 +606,7 @@ export async function supervise(id, claim) {
   const beat = () => atomicJSON(path.join(dir(id), 'heartbeat.json'), { pid: process.pid, claim, at: now() });
   beat();
   const heartbeatTimer = setInterval(beat, 5000); heartbeatTimer.unref();
-  let child, timer, gracefulTimer, forceTimer, result = null, failure = null, requestedReason = null;
+  let child, spawned = null, timer, gracefulTimer, forceTimer, result = null, failure = null, requestedReason = null;
   const e = m.executor, isRPC = ['pi', 'omp'].includes(e.harness);
   const stdoutFile = path.join(dir(id), 'stdout.log'), stderrFile = path.join(dir(id), 'stderr.log');
   const logOut = fs.openSync(stdoutFile, 'a', 0o600), logErr = fs.openSync(stderrFile, 'a', 0o600);
@@ -413,9 +633,17 @@ export async function supervise(id, claim) {
     // Cancellation and child registration share the admission lock.
     admission(() => {
       m = getRun(id); check(m.status === 'running', 'Run cancelled before model launch');
+      // Persist ambiguity before spawn. If the supervisor is killed before PID
+      // publication, recovery retains the writer lease until explicit process
+      // inspection confirms that no unregistered worker remains.
+      m.launch_registration_pending = true; save(m);
       child = spawn(built.cmd, built.args, { cwd: m.cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, DELEGATE_KIT_DEPTH: '1', ...(built.config ? { OPENCODE_CONFIG_CONTENT: mergeInline(built.config), OPENCODE_AUTO_SHARE: 'false' } : {}) } });
-      m.child_pid = child.pid || null; m.child_fingerprint = child.pid ? fingerprint(child.pid) : null; save(m);
+      spawned = { pid: child.pid || null, fingerprint: child.pid ? fingerprint(child.pid) : null };
+      m.child_pid = spawned.pid; m.child_fingerprint = spawned.fingerprint; m.execution_started_at = child.pid ? now() : null;
+      if (process.env.NODE_ENV === 'test' && process.env.DELEGATE_KIT_TEST_FAIL_CHILD_REGISTRATION === id) throw new Error('Injected child registration failure');
+      m.launch_registration_pending = false;
+      save(m);
     });
     const closed = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, sig) => resolve({ code, sig })); });
     closed.catch(() => {});
@@ -454,17 +682,22 @@ export async function supervise(id, claim) {
     clearInterval(heartbeatTimer); clearTimeout(timer); clearTimeout(gracefulTimer); clearTimeout(forceTimer); process.off('SIGTERM', onSignal); process.off('SIGINT', onSignal);
     // Keep the lease until all descendants have stopped, even after a leader exits.
     m = getRun(id);
-    if (m.child_pid && groupAlive(m.child_pid)) {
+    const ownedChild = m.child_pid ? { pid: m.child_pid, fingerprint: m.child_fingerprint } : spawned;
+    if (ownedChild?.pid && groupAlive(ownedChild.pid)) {
       // This supervisor created and continuously owns this process group.
-      try { process.kill(-m.child_pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') failure ||= error.message; }
-      for (let i = 0; i < 50 && groupAlive(m.child_pid); i++) await sleep(100);
+      try { process.kill(-ownedChild.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') failure ||= error.message; }
+      for (let i = 0; i < 50 && groupAlive(ownedChild.pid); i++) await sleep(100);
     }
     child?.stdout?.removeAllListeners('data'); child?.stderr?.removeAllListeners('data');
     fs.closeSync(logOut); fs.closeSync(logErr);
     admission(() => {
       const value = getRun(id);
-      if (groupAlive(value.child_pid)) { value.status = 'orphaned'; value.error = failure || 'Child group still active; ownership retained'; save(value); }
-      else finish(value, result, failure, requestedReason || (value.status === 'cancelling' ? 'cancelled' : null));
+      const childPid = value.child_pid || ownedChild?.pid || null;
+      if (groupAlive(childPid)) {
+        value.child_pid = childPid; value.child_fingerprint ||= ownedChild?.fingerprint || null;
+        value.status = 'orphaned'; value.error = failure || 'Child group still active; ownership retained'; save(value);
+      }
+      else { value.launch_registration_pending = false; finish(value, result, failure, requestedReason || (value.status === 'cancelling' ? 'cancelled' : null)); }
     });
   }
 }

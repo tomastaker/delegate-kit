@@ -5,11 +5,11 @@ import { fileURLToPath } from 'node:url';
 import { home, check, readJSON, validatePreset, presetFiles, loadPreset, savePreset, copyPreset, setDefault, context, catalog } from './presets.mjs';
 import { discover } from './executors.mjs';
 import { migrate } from './migrate.mjs';
-import { prepare, launch, attach, ingest, resume, status, wait, cancel, recover, accept, supervise, getRun, dispatchFailed } from './runtime.mjs';
+import { prepare, launch, attach, ingest, resume, status, overview, watch, wait, cancel, recover, accept, supervise, getRun, dispatchFailed } from './runtime.mjs';
 
 function args(input) {
   const o = { _: [] };
-  const booleans = ['task-only', 'dry-run', 'apply', 'stopped', 'confirmed-not-started'];
+  const booleans = ['task-only', 'dry-run', 'apply', 'stopped', 'confirmed-not-started', 'full'];
   for (let i = 0; i < input.length; i++) {
     if (!input[i].startsWith('--')) { o._.push(input[i]); continue; }
     const key = input[i].slice(2); check(!Object.hasOwn(o, key), `Duplicate --${key}`);
@@ -21,7 +21,7 @@ function args(input) {
 const optKeys = {
   context: ['session', 'preset', 'task-only'], catalog: ['session', 'preset', 'task-only', 'role'],
   presets: ['file', 'revision'], prepare: ['session', 'preset', 'task-only', 'task', 'agent', 'role', 'brief', 'cwd', 'capabilities', 'workspace', 'timeout-ms', 'stall-ms', 'max-workers', 'max-writers', 'max-runs', 'max-retries'],
-  run: [], attach: ['host-agent', 'workspace-id'], status: [], result: [], wait: ['timeout-ms'], resume: ['brief'], cancel: [], recover: [], accept: [],
+  run: [], attach: ['host-agent', 'workspace-id'], status: [], result: [], overview: ['session', 'task'], watch: ['session', 'task', 'after', 'timeout-ms', 'full'], wait: ['timeout-ms'], resume: ['brief'], cancel: [], recover: ['confirmed-not-started', 'evidence'], accept: [],
   'dispatch-failed': ['dispatch-token', 'confirmed-not-started', 'evidence'],
   event: ['host-agent', 'event', 'file', 'stopped', 'dispatch-token', 'progress'], doctor: [], migrate: ['decisions', 'dry-run', 'apply'],
   materialize: ['directory'], _supervise: ['claim'], help: [], start: [],
@@ -60,10 +60,12 @@ export async function main(input = process.argv.slice(2)) {
     case 'dispatch-failed': return dispatchFailed(action, { dispatchToken: o['dispatch-token'], confirmedNotStarted: o['confirmed-not-started'], evidence: o.evidence ? fs.readFileSync(o.evidence, 'utf8') : undefined });
     case 'event': return ingest(action, { hostAgent: o['host-agent'], event: o.event, result: o.file ? readJSON(o.file) : undefined, stopped: o.stopped, dispatchToken: o['dispatch-token'], progress: o.progress });
     case 'status': case 'result': return status(action);
+    case 'overview': return overview({ session: o.session, task: o.task });
+    case 'watch': return watch({ session: o.session, task: o.task, after: o.after, milliseconds: ms, full: o.full === true });
     case 'wait': return wait(action, ms);
     case 'resume': return resume(action, o.brief);
     case 'cancel': return cancel(action);
-    case 'recover': return recover(action);
+    case 'recover': return recover(action, { confirmedNotStarted: o['confirmed-not-started'], evidence: o.evidence ? fs.readFileSync(o.evidence, 'utf8') : undefined });
     case 'accept': return accept(action);
     case 'doctor': return { executors: discover(), root: home(), note: 'No model calls made. Installed/version is not proof of authorization. See references/providers.md.' };
     case 'migrate': check(!(o.apply && o['dry-run']), 'Choose --apply or --dry-run'); return migrate(o.decisions ? readJSON(o.decisions) : {}, o.apply === true);
@@ -84,7 +86,8 @@ export async function main(input = process.argv.slice(2)) {
         'context open [--session HOST:ID] [--preset X1] [--task-only]', 'catalog --session HOST:ID [--role ROLE]',
         'prepare --session HOST:ID --task ID --agent PROFILE --brief FILE [--cwd WORKTREE] [--capabilities FILE] [--workspace FILE]',
         'run ID', 'attach ID --host-agent ID [--workspace-id ID]', 'event ID --host-agent ID --dispatch-token TOKEN --event complete --file RESULT --stopped',
-        'dispatch-failed ID --dispatch-token TOKEN --confirmed-not-started --evidence FILE', 'status|result|wait|cancel|recover|accept ID', 'resume ID --brief FILE', 'migrate --dry-run [--decisions FILE]'],
+        'dispatch-failed ID --dispatch-token TOKEN --confirmed-not-started --evidence FILE', 'overview --session HOST:ID [--task ID]',
+        'watch --session HOST:ID [--task ID] [--after CURSOR] [--timeout-ms 60000] [--full]', 'status|result|wait|cancel|accept ID', 'recover ID [--confirmed-not-started --evidence FILE]', 'resume ID --brief FILE', 'migrate --dry-run [--decisions FILE]'],
       root: home(), note: 'Invoke this script by its installed path. No global dk command is installed. Legacy runs use agent-run.' };
   }
 }

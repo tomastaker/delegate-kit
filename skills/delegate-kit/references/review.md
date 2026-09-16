@@ -4,7 +4,7 @@ Review substantial delegated implementation and changes whose failure modes just
 
 Every initial reviewer gets a fresh read-only context, the same frozen specification and diff, and no other reviewer's findings. Freshness and family diversity are different properties. Two agents of the same model can provide independent analysis; agreement alone is not proof.
 
-A profile's `review.also_run` is a required set, validated and reserved by `prepare`. Dispatch all returned runs and keep their initial results independent. A missing/unavailable mandatory reviewer makes the set incomplete. Optional extra coverage is a coordinator decision within user limits. A review lead can help resolve difficult decomposition; it is never an automatic prelude.
+A read-only reviewer profile's `review.also_run` is a required reviewer set over the same already-frozen specification and diff, validated and reserved by `prepare`. Dispatch all returned runs and keep their initial results independent. It does not encode an implementer-to-reviewer dependency: prepare review only after the implementation checkpoint exists. A missing/unavailable mandatory reviewer makes the set incomplete. Optional extra coverage is a coordinator decision within user limits. A review lead can help resolve difficult decomposition; it is never an automatic prelude.
 
 ## Lenses
 
