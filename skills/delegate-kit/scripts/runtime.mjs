@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { home, check, identifier, hash, readJSON, atomicJSON, context, reviewSet, accessOf } from './presets.mjs';
 import { resolveLimits } from './limits.mjs';
 import { budget } from './budget.mjs';
-import { resolveExecutor, bridgeInvocation } from './executors.mjs';
+import { resolveExecutor, bridgeInvocation, assertWorkspaceBinding } from './executors.mjs';
 import { buildCommand, extractResult, validate } from './adapters.mjs';
 import { inspectPermissions, mergeInline } from './opencode-permissions.mjs';
 import { rpcCommand, rpcTurn, ompConfig } from './rpc.mjs';
@@ -141,6 +141,7 @@ export function prepare(options) {
     const agent = p.agents[profile];
     const executor = resolveExecutor(agent, options.capabilities || [], h => spawnSync('which', [h], { stdio: 'ignore' }).status === 0);
     const ws = workspace(options.cwd, accessOf(agent) === 'workspace-write', executor.transport === 'paseo' ? options.workspace : null);
+    assertWorkspaceBinding(executor, ws.path);
     check(executor.transport !== 'paseo' || ws.daemon === executor.capability.daemon, 'Workspace daemon differs from selected Paseo daemon');
     const run = randomUUID();
     return { schema_version: 2, id: run, parent_session: options.session, task: options.task,
@@ -313,6 +314,7 @@ export function resume(id, briefFile) {
     check(terminal.includes(prev.status) && prev.transport_session_id, 'Resume requires a stopped run with an exact saved session');
     check(!allRuns().some(r => active.includes(r.status) && r.parent_session === prev.parent_session && r.transport_session_id === prev.transport_session_id), 'An attempt already owns this executor session');
     if (prev.executor.transport === 'cli' && ['pi', 'omp'].includes(prev.executor.harness)) check(prev.transport_session_file && fs.existsSync(prev.transport_session_file), 'Saved RPC session file is unavailable; do not resume a prefix or last session');
+    assertWorkspaceBinding(prev.executor, prev.cwd);
     enforceCaps(prev.limits, counts(prev.workspace.owner === 'delegate-kit' ? prev.cwd : null), { workers: 1, writers: prev.write ? 1 : 0 });
     const m = { ...prev, id: randomUUID(), status: 'prepared', created: now(), started: null, finished: null, error: null,
       resume_of: id, result: null, result_validated: false, accepted: false, attempt_kind: 'continuation', pid: null,

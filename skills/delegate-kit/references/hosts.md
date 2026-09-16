@@ -21,6 +21,8 @@ Read the actual tool schema and model/provider discovery, then write a temporary
 
 Include only capabilities actually established in this host. A prompt saying read-only is not enforcement. Codex native inherits the host's access boundary; if that boundary cannot enforce the profile's access, use CLI. Explicit inheritance also needs `current_model`. Auto tries compatible Paseo, compatible native, then the same harness CLI. Explicit transports fail if evidence is insufficient. Native Pi/OMP/T3 bridges are not implemented; use their CLI if locally available. T3 is a host, never a model provider.
 
+For a native writer, also provide `workspace_binding: { "cwd": "/absolute/linked/worktree", "enforced": true }`. Set this only after verifying that the host places the child in that directory and enforces its write boundary there. The coordinator's cwd, a prompt instruction or a list of accessible directories is not sufficient evidence. The runtime compares canonical paths with the leased worktree before admission and again before dispatch or continuation. This applies to both Codex and Claude native writers. Without that host guarantee, select CLI explicitly; its process starts in the assigned worktree. Read-only native tasks keep their existing access checks. Paseo uses its explicit workspace ID binding.
+
 ## Dispatch and events
 
 1. `prepare` snapshots the team and reserves its required profile set. Local writers use linked worktrees.

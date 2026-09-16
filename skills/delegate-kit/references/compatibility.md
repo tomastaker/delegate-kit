@@ -11,6 +11,8 @@
 | Native Codex/Claude | prepare, exact invocation, unique definitions, attach/events | bridge fixtures | tool/schema-dependent; no agent dispatched | not run |
 | Paseo | materialized create/follow-up settings, daemon/workspace lease | bridge fixtures | no daemon/tools available | not run |
 
+Native writers require verified host enforcement of the reserved worktree binding. Hosts that cannot establish it must use an explicitly selected CLI route.
+
 Native Pi/OMP and a dedicated T3 bridge are not implemented. A direct CLI does not become a Paseo UI agent. Desktop/cloud chats need actual shell and host tools. [Adapter contracts, official sources and limitations](providers.md).
 
 Worktrees coordinate writers, not all filesystem permissions. Read-only tool controls differ by executor. Pi/OMP writers deliberately exclude shell and internal delegation; the coordinator performs command checks and authorized commits. Runtime usage is null when unavailable, not zero. The runtime counts its own reservations/continuations and known legacy work; it cannot account for arbitrary agents launched outside it. No savings or model-quality percentage is promised.

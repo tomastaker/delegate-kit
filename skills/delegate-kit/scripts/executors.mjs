@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { check, accessOf, harnesses } from './presets.mjs';
 
@@ -62,7 +64,19 @@ export function resolveExecutor(agent, capabilities = [], available = () => true
   return { ...e, model, transport: 'cli', access, ...(cliCapability ? { capability: cliCapability } : {}), actual_model: null };
 }
 
+// Native agents inherit placement from the host. A path in the prompt is not a binding.
+export function assertWorkspaceBinding(executor, cwd) {
+  if (executor.transport !== 'native' || executor.access !== 'workspace-write') return;
+  const c = executor.capability, binding = c?.workspace_binding;
+  let matches = false;
+  if (c?.verified === true && binding?.enforced === true && typeof binding.cwd === 'string' && path.isAbsolute(binding.cwd) && typeof cwd === 'string' && path.isAbsolute(cwd)) {
+    try { matches = fs.realpathSync(binding.cwd) === fs.realpathSync(cwd); } catch { /* Missing workspace evidence fails closed. */ }
+  }
+  check(matches, 'Native writer requires a verified, enforced host binding to the reserved worktree; choose an explicit CLI route when the host cannot provide it');
+}
+
 export function bridgeInvocation(meta, prompt) {
+  assertWorkspaceBinding(meta.executor, meta.cwd);
   const e = meta.executor, c = e.capability;
   if (e.transport === 'paseo') {
     const modeId = c.mode_ids?.[e.access];

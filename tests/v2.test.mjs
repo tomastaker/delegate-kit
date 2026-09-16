@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { savePreset, loadPreset, copyPreset, context, setDefault, validatePreset, hash, readJSON } from '../skills/delegate-kit/scripts/presets.mjs';
-import { resolveExecutor } from '../skills/delegate-kit/scripts/executors.mjs';
+import { resolveExecutor, bridgeInvocation } from '../skills/delegate-kit/scripts/executors.mjs';
 import { FrameDecoder, sumUsage } from '../skills/delegate-kit/scripts/rpc.mjs';
 import { migrate } from '../skills/delegate-kit/scripts/migrate.mjs';
 import { prepare, launch, wait, resume, attach, ingest as ingestRaw, dispatchFailed, accept, cancel, recover, status, getRun } from '../skills/delegate-kit/scripts/runtime.mjs';
@@ -454,3 +454,33 @@ test('Installed CLI runs through a skill-directory symlink', t => {
   const pi = spawnSync(process.execPath, [path.join(linked, 'scripts/pi-worker.mjs'), '--sdk', path.join(root, 'absent-sdk.mjs')], { encoding: 'utf8' });
   assert.equal(pi.status, 1); assert.match(pi.stderr, /Pi SDK startup failed/);
 });
+
+
+test('Native writers require an enforced binding to the leased worktree before admission', () => sandbox(async ({ root, brief, state }) => {
+  const repo = path.join(root, 'repo'), wt = path.join(root, 'writer'), alias = path.join(root, 'writer-link');
+  fs.mkdirSync(repo);
+  const git = args => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  git(['init', '-q']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'Fixture']);
+  git(['worktree', 'add', '-qb', 'writer', wt]); fs.symlinkSync(wt, alias);
+  const lock = path.join(spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: wt, encoding: 'utf8' }).stdout.trim(), 'delegate-kit.lock');
+  for (const harness of ['codex', 'claude']) {
+    savePreset(preset(harness, { ...agent(harness, { transport: 'native' }), role: 'implementer' }));
+    context({ session: 'test:chat', preset: harness });
+    const host = { ...cap('native', harness), host: harness, dynamic_roles: true };
+    for (const binding of [undefined, { cwd: repo, enforced: true }, { cwd: wt, enforced: false }, { cwd: 'writer', enforced: true }]) {
+      assert.throws(() => prep(brief, { cwd: wt, capabilities: [{ ...host, workspace_binding: binding }] }), /Native writer requires.*worktree/);
+      assert.equal(fs.existsSync(lock), false);
+      assert.equal(fs.existsSync(path.join(state, 'runs')) && fs.readdirSync(path.join(state, 'runs')).length > 0, false);
+    }
+  }
+  const host = { ...cap(), workspace_binding: { cwd: alias, enforced: true } };
+  context({ session: 'test:chat', preset: 'codex' });
+  const r = prep(brief, { cwd: wt, capabilities: [host] });
+  assert.equal(fs.existsSync(lock), true);
+  assert.equal(bridgeInvocation(getRun(r.id), 'task').tool, 'spawn_agent');
+  const legacy = getRun(r.id); delete legacy.executor.capability.workspace_binding;
+  assert.throws(() => bridgeInvocation(legacy, 'task'), /Native writer requires/);
+  legacy.resume_of = 'previous'; legacy.transport_session_id = 'host-agent';
+  assert.throws(() => bridgeInvocation(legacy, 'continue'), /Native writer requires/);
+  await cancel(r.id);
+}));
