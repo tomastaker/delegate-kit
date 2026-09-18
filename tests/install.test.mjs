@@ -6,47 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 const skill = fileURLToPath(new URL('../skills/delegate-kit/', import.meta.url));
-const installer = path.join(skill, 'hooks/native-agents.mjs');
-const invoke = (action, home, dry = '0') => spawnSync(process.execPath, [installer, action, skill, home, dry], { encoding: 'utf8' });
-test('native install removes legacy pins, preserves user config, is idempotent and reversible', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-install-'));
+test('optional hook install is idempotent, preserves custom settings and does not install static roles', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-install-'));
   try {
-    const unrelated = 'model = "user-selected"\n';
-    fs.writeFileSync(path.join(home, 'config.toml'), unrelated + '# >>> delegate-kit agents >>>\n[agents.dk-planner]\nmodel = "old-pin"\n# <<< delegate-kit agents <<<\n');
-    const before = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
-    assert.equal(invoke('install', home, '1').status, 0);
-    assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'), before);
-    assert.ok(!fs.existsSync(path.join(home, 'agents')));
-    assert.equal(invoke('install', home).status, 0);
-    assert.equal(fs.readFileSync(path.join(home, 'config.toml'), 'utf8'), unrelated);
-    const parsed = spawnSync('python3', ['-c', 'import pathlib,sys,tomllib,json;print(json.dumps([tomllib.loads(p.read_text()) for p in pathlib.Path(sys.argv[1]).glob("*.toml")]))', path.join(home, 'agents')], { encoding: 'utf8' });
-    assert.equal(parsed.status, 0, parsed.stderr);
-    const agents = JSON.parse(parsed.stdout); assert.equal(agents.length, 6);
-    for (const a of agents) { assert.ok(a.name); assert.ok(a.developer_instructions); assert.ok(!('model' in a)); assert.ok(!('model_reasoning_effort' in a)); }
-    assert.equal(invoke('install', home).stdout, '');
-    assert.equal(invoke('uninstall', home).status, 0);
-    assert.equal(fs.readdirSync(path.join(home, 'agents')).filter(x => x.endsWith('.toml')).length, 0);
-    assert.ok(fs.readdirSync(home).some(x => x.includes('bak-delegate-kit')));
-  } finally { fs.rmSync(home, { recursive: true }); }
-});
-test('unmanaged native role is never overwritten', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-install-'));
-  try {
-    fs.mkdirSync(path.join(home, 'agents'));
-    const file = path.join(home, 'agents/dk-planner.toml'); fs.writeFileSync(file, 'user-owned');
-    const r = invoke('install', home); assert.notEqual(r.status, 0); assert.match(r.stderr, /unmanaged/);
-    assert.equal(fs.readFileSync(file, 'utf8'), 'user-owned'); assert.equal(fs.readdirSync(path.dirname(file)).length, 1);
-  } finally { fs.rmSync(home, { recursive: true }); }
-});
-test('Claude installation refuses unmanaged roles instead of replacing them', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-claude-install-'));
-  try {
-    const dir = path.join(home, 'agents'); fs.mkdirSync(dir);
-    const file = path.join(dir, 'dk-planner.md'); fs.writeFileSync(file, 'my custom planner');
-    const r = spawnSync('bash', [path.join(skill, 'hooks/install.sh'), '--claude', '--agents-only'], {
-      encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: home },
-    });
-    assert.notEqual(r.status, 0); assert.match(r.stderr, /unmanaged/);
-    assert.equal(fs.readFileSync(file, 'utf8'), 'my custom planner');
-  } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    const env = { ...process.env, CODEX_HOME: path.join(root, 'codex'), CLAUDE_CONFIG_DIR: path.join(root, 'claude') };
+    fs.mkdirSync(env.CODEX_HOME); fs.mkdirSync(env.CLAUDE_CONFIG_DIR);
+    const file = path.join(env.CODEX_HOME, 'hooks.json');
+    fs.writeFileSync(file, JSON.stringify({ custom: true, hooks: { PreToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'user-hook' }] }] } }));
+    const call = (name, args = []) => { const r = spawnSync('bash', [path.join(skill, 'hooks', name + '.sh'), ...args], { env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+    const before = fs.readFileSync(file, 'utf8'); call('install', ['--dry-run']); assert.equal(fs.readFileSync(file, 'utf8'), before);
+    call('install'); const first = fs.readFileSync(file, 'utf8'); call('install'); assert.equal(fs.readFileSync(file, 'utf8'), first);
+    assert.equal(JSON.parse(first).hooks.PreToolUse.length, 2); assert.ok(!fs.existsSync(path.join(env.CODEX_HOME, 'agents')));
+    call('uninstall'); const after = JSON.parse(fs.readFileSync(file)); assert.equal(after.custom, true); assert.equal(after.hooks.PreToolUse.length, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

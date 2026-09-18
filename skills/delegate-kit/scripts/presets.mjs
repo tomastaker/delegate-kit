@@ -61,11 +61,15 @@ export function validatePreset(preset) {
     identifier(id, 'agent id');
     check(!seen.has(id.toLowerCase()), `agents.${id}: case collision`); seen.add(id.toLowerCase());
     const at = `agents.${id}`;
-    keys(agent, ['role', 'when', 'instructions', 'executor', 'access', 'review'], at);
+    keys(agent, ['role', 'when', 'instructions', 'executor', 'access', 'review', 'routing'], at);
     identifier(agent.role, `${at}.role`);
     check(nonempty(agent.when), `${at}.when: describe when to use this agent`);
     if (agent.instructions !== undefined) check(nonempty(agent.instructions), `${at}.instructions: expected text`);
     check(agent.access === undefined || ['read-only', 'workspace-write'].includes(agent.access), `${at}.access: unsupported access`);
+    if (agent.routing !== undefined) {
+      keys(agent.routing, ['tier'], `${at}.routing`);
+      check(['economy', 'standard', 'hard'].includes(agent.routing.tier), `${at}.routing.tier: expected economy, standard or hard`);
+    }
     const e = agent.executor;
     keys(e, ['harness', 'provider', 'model', 'reasoning', 'transport', 'inherit_model'], `${at}.executor`);
     check(harnesses.includes(e.harness), `${at}.executor.harness: unsupported harness`);
@@ -77,6 +81,7 @@ export function validatePreset(preset) {
       check(!/REPLACE_WITH|YOUR_|<[^>]+>/i.test(e[key]), `${at}.executor.${key}: replace placeholder before saving`);
     }
     if (agent.review !== undefined) {
+      check(agent.role === 'reviewer' && accessOf(agent) === 'read-only', `${at}.review: only a read-only reviewer can require a review set`);
       keys(agent.review, ['also_run', 'independent'], `${at}.review`);
       check(agent.review.independent === undefined || agent.review.independent === true, `${at}.review.independent must be true`);
       check(Array.isArray(agent.review.also_run) && agent.review.also_run.length > 0, `${at}.review.also_run must list profiles`);
@@ -162,5 +167,5 @@ export function context({ session, preset, taskOnly = false }, root = home()) {
 }
 export function catalog(preset, role) {
   return { id: preset.id, defaults: preset.defaults || {}, coordination: preset.coordination || null,
-    agents: Object.entries(preset.agents).filter(([, a]) => !role || a.role === role).map(([id, a]) => ({ id, role: a.role, when: a.when, executor: a.executor, access: accessOf(a), review: a.review || null })) };
+    agents: Object.entries(preset.agents).filter(([, a]) => !role || a.role === role).map(([id, a]) => ({ id, role: a.role, when: a.when, executor: a.executor, access: accessOf(a), review: a.review || null, routing: a.routing || null })) };
 }

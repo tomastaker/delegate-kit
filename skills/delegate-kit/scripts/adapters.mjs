@@ -3,8 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { narrowPermissions } from './opencode-permissions.mjs';
 const present = value => value !== null && value !== undefined;
-export function buildCommand({ adapter, model, effort, provider, prompt, write, resumeId, skillDir, agentName = 'delegate-kit', permissionRules }) {
-  const schema = path.join(skillDir, 'references', 'result-schema.json');
+export function buildCommand({ adapter, model, effort, provider, prompt, write, resumeId, skillDir, schemaFile, agentName = 'delegate-kit', permissionRules }) {
+  const schema = schemaFile;
+  if (['codex', 'claude'].includes(adapter) && !schema) throw new Error('A per-run result schema is required');
   if (adapter === 'codex') {
     const args = ['exec', ...(resumeId ? ['resume'] : []), '--json', '--skip-git-repo-check', '-c', 'agents.enabled=false'];
     args.push('-c', `sandbox_mode="${write ? 'workspace-write' : 'read-only'}"`);
@@ -79,11 +80,12 @@ export function extractResult(adapter, stdout, outFile, schema) {
     try { obj = JSON.parse(stdout); } catch { obj = stdout.split('\n').map(line => { try { return JSON.parse(line); } catch { return null; } }).findLast(o => o?.type === 'result'); }
     if (obj) {
       result = obj.structured_output || parseFinal(obj.result);
-      usage = obj.usage || null; sessionId = obj.session_id || null; cost = obj.total_cost_usd || null;
+      usage = obj.usage || null; sessionId = obj.session_id || null; cost = obj.total_cost_usd ?? null;
       if (obj.is_error) error = 'Claude reported an error';
       // modelUsage can include auxiliary models; it is not proof of the main model.
     }
   } else {
+    const steps = new Map();
     for (const line of stdout.split('\n')) {
       let ev; try { ev = JSON.parse(line); } catch { continue; }
       if (adapter === 'codex') {
@@ -100,15 +102,37 @@ export function extractResult(adapter, stdout, outFile, schema) {
       } else if (adapter === 'opencode') {
         sessionId = ev.sessionID || sessionId;
         if (ev.type === 'text') text = ev.part?.text || '';
-        if (ev.type === 'step_finish') { usage = ev.part?.tokens || usage; cost = ev.part?.cost ?? cost; }
+        if (ev.type === 'step_finish') {
+          // OpenCode v1.18.23 processor.ts stores per-step deltas in the part;
+          // run.ts emits that same part. Replayed/updated parts replace by ID.
+          const part = ev.part || {};
+          steps.set(part.id ? JSON.stringify([part.sessionID || ev.sessionID, part.messageID, part.id]) : Symbol(), part);
+        }
         if (ev.type === 'error') error = ev.error?.data?.message || 'OpenCode run failed';
       }
+    }
+    if (adapter === 'opencode' && steps.size) {
+      usage = sumMeasurements([...steps.values()].map(part => part.tokens));
+      cost = sumMeasurements([...steps.values()].map(part => part.cost));
     }
     if (adapter === 'codex') { try { text = fs.readFileSync(outFile, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; } }
     result = parseFinal(text);
   }
   const invalid = validate(result, schema);
   if (invalid) error ||= `Invalid worker result: ${invalid}`;
-  if (error) result = { status: 'failed', summary: error, changes: [], checks_run: [], not_verified: ['Worker output did not establish completion; inspect logs and worktree.'], plan: [], findings: [], questions: [], sources: [], next_steps: [] };
+  if (error) result = null;
   return { result, usage, sessionId, actualModel, cost_usd: cost, error };
+}
+
+// A missing measurement is unknown, including a missing nested component.
+export function sumMeasurements(values) {
+  if (!values.length) return null;
+  if (values.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0)) {
+    const total = values.reduce((a, b) => a + b, 0);
+    return Number.isFinite(total) ? total : null;
+  }
+  if (values.every(v => v && typeof v === 'object' && !Array.isArray(v))) {
+    return Object.fromEntries([...new Set(values.flatMap(v => Object.keys(v)))].map(k => [k, sumMeasurements(values.map(v => v[k]))]));
+  }
+  return null;
 }

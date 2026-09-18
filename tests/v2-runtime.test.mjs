@@ -5,76 +5,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { migrationPlan } from '../skills/delegate-kit/scripts/migrate.mjs';
 
 const skill = fileURLToPath(new URL('../skills/delegate-kit', import.meta.url));
 const cli = path.join(skill, 'scripts/dk.mjs');
 
 function command(args, options = {}) {
+  args = fixtureArgs(args, options.env);
   return spawnSync(args[0], args.slice(1), { encoding: 'utf8', ...options });
+}
+
+function fixtureArgs(args, env) {
+  if (args[1] !== cli || args[2] !== 'prepare') return args;
+  const value = flag => args[args.indexOf(flag) + 1];
+  const session = value('--session'), task = value('--task'), repo = value('--cwd');
+  const file = path.join(env.DELEGATE_KIT_HOME, 'fixture-contract.json');
+  fs.writeFileSync(file, JSON.stringify({ session, task, repo, specification: { path: value('--brief'), goal: 'Ownership fixture', requirements: [{ id: 'R1', text: 'Exclusive ownership' }] },
+    work_items: [{ id: 'work', profile: 'implementer', routing: { defined: true, risk: 'ordinary', reason: 'Isolated fixture' }, scope: { include: ['.'] } }], checks: [], review: { required: false, profiles: [] }, trivial: true }));
+  const opened = spawnSync(process.execPath, [cli, 'task', 'open', '--session', session, '--task', task, '--contract', file], { env, encoding: 'utf8' });
+  assert.equal(opened.status, 0, opened.stderr);
+  return [...args, '--work-item', 'work'];
 }
 
 test('v2 example validates through the public CLI', () => {
   const result = command([process.execPath, cli, 'presets', 'validate', '--file', path.join(skill, 'examples/main.json')]);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), { id: 'main', valid: true });
-});
-
-test('migration preserves the parent-selected backend-map default and refuses to guess without it', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-migrate-v2-'));
-  try {
-    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
-      roles: { implementer: { codex: ['gpt-model', 'high'], claude: ['claude-model', 'high'] } },
-    }));
-    const decided = migrationPlan({ parents: { legacy: 'claude' } }, root);
-    assert.deepEqual(decided.issues, []);
-    const selected = decided.presets[0].agents[decided.presets[0].defaults.implementer].executor;
-    assert.equal(selected.harness, 'claude');
-    assert.equal(selected.model, 'claude-model');
-
-    const ambiguous = migrationPlan({}, root);
-    assert.match(ambiguous.issues.join('\n'), /needs an explicit parents\.legacy decision/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('migration preserves cross-family duo reviewer routing and requires author identity', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-migrate-reviewer-'));
-  try {
-    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
-      mode: 'duo',
-      families: ['codex', 'claude'],
-      roles: { reviewer: { codex: ['gpt-review', 'high'], claude: ['claude-review', 'high'] } },
-    }));
-    const decided = migrationPlan({ parents: { legacy: 'claude' }, authors: { legacy: 'claude' } }, root);
-    assert.deepEqual(decided.issues, []);
-    const selected = decided.presets[0].agents[decided.presets[0].defaults.reviewer].executor;
-    assert.equal(selected.harness, 'codex');
-    assert.equal(selected.model, 'gpt-review');
-
-    const ambiguous = migrationPlan({ parents: { legacy: 'claude' } }, root);
-    assert.match(ambiguous.issues.join('\n'), /authors\.legacy/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('migration materializes a selected backend missing from a partial role override map', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-migrate-partial-'));
-  try {
-    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({
-      backends: { codex: { model: 'gpt-default' } },
-      roles: { implementer: { claude: ['claude-override', 'high'] } },
-    }));
-    const plan = migrationPlan({ parents: { legacy: 'codex' } }, root);
-    assert.deepEqual(plan.issues, []);
-    const selected = plan.presets[0].agents[plan.presets[0].defaults.implementer].executor;
-    assert.equal(selected.harness, 'codex');
-    assert.equal(selected.model, 'gpt-default');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('different state roots cannot reserve the same worktree concurrently', async () => {
@@ -92,8 +47,8 @@ test('different state roots cannot reserve the same worktree concurrently', asyn
     const preset = JSON.parse(fs.readFileSync(path.join(skill, 'examples/main.json'), 'utf8'));
     const repoMutex = path.join(repo, '.git', 'delegate-kit.caps.lock');
     fs.mkdirSync(repoMutex);
-    const legacyOwner = spawn(process.execPath, ['-e', `const fs=require('fs');const d=process.argv[1];setTimeout(()=>fs.writeFileSync(d+'/pid',String(process.pid)),100);setTimeout(()=>{fs.rmSync(d,{recursive:true,force:true});process.exit(0)},400)`, repoMutex]);
-    const legacyOwnerDone = new Promise(resolve => legacyOwner.on('close', resolve));
+    const otherOwner = spawn(process.execPath, ['-e', `const fs=require('fs');const d=process.argv[1];setTimeout(()=>fs.writeFileSync(d+'/pid',String(process.pid)),100);setTimeout(()=>{fs.rmSync(d,{recursive:true,force:true});process.exit(0)},400)`, repoMutex]);
+    const otherOwnerDone = new Promise(resolve => otherOwner.on('close', resolve));
     const startedAt = Date.now();
     const starts = [];
     for (let i = 0; i < 8; i++) {
@@ -101,7 +56,8 @@ test('different state roots cannot reserve the same worktree concurrently', asyn
       fs.mkdirSync(path.join(home, 'presets'), { recursive: true });
       fs.writeFileSync(path.join(home, 'presets/main.json'), JSON.stringify(preset));
       starts.push(new Promise(resolve => {
-        const child = spawn(process.execPath, [cli, 'prepare', '--session', `codex:race-${i}`, '--preset', 'main', '--task', 'race', '--agent', 'implementer', '--brief', brief, '--cwd', worktree], {
+        const args = fixtureArgs([process.execPath, cli, 'prepare', '--session', `codex:race-${i}`, '--preset', 'main', '--task', 'race', '--agent', 'implementer', '--brief', brief, '--cwd', worktree], { ...process.env, DELEGATE_KIT_HOME: home });
+        const child = spawn(args[0], args.slice(1), {
           env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, DELEGATE_KIT_HOME: home },
           stdio: ['ignore', 'pipe', 'pipe'],
         });
@@ -112,8 +68,8 @@ test('different state roots cannot reserve the same worktree concurrently', asyn
       }));
     }
     const results = await Promise.all(starts);
-    await legacyOwnerDone;
-    assert.ok(Date.now() - startedAt >= 350, 'v2 must wait for the v1 repository owner instead of replacing its empty lock directory');
+    await otherOwnerDone;
+    assert.ok(Date.now() - startedAt >= 350, 'Runtime must wait for the repository owner instead of replacing its empty lock directory');
     assert.equal(results.filter(result => result.code === 0).length, 1, results.map(result => result.stderr).join('\n'));
     assert.equal(results.filter(result => /already owned/.test(result.stderr)).length, 7);
     const gitDir = command(['git', 'rev-parse', '--absolute-git-dir'], { cwd: worktree }).stdout.trim();
@@ -244,6 +200,7 @@ test('resume uses repository-global ownership across different state roots', asy
     fs.rmSync(path.join(gitDir, 'delegate-kit.lock'));
     fs.mkdirSync(path.join(homes[1], 'runs'), { recursive: true });
     fs.cpSync(runA, path.join(homes[1], 'runs', id), { recursive: true });
+    fs.cpSync(path.join(homes[0], 'sessions'), path.join(homes[1], 'sessions'), { recursive: true });
 
     const results = await Promise.all(homes.map(home => new Promise(resolve => {
       const child = spawn(process.execPath, [cli, 'resume', id, '--brief', brief], { env: { ...envA, DELEGATE_KIT_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -256,8 +213,8 @@ test('resume uses repository-global ownership across different state roots', asy
   }
 });
 
-test('v2 waits through v1 empty-owner publication windows', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-v1-v2-lock-'));
+test('admission waits through empty-owner publication windows', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-admission-lock-'));
   try {
     const home = path.join(root, 'state'); fs.mkdirSync(home, { recursive: true });
     const mutex = path.join(home, 'caps.lock'); fs.writeFileSync(mutex, '');

@@ -27,7 +27,7 @@ Use the assigned short outcome instead of the profile when it is already known a
 
 Indicator semantics:
 
-- 🟢 active work with confirmed execution, or accepted completion;
+- 🟢 active work with confirmed execution, or a verified task completion;
 - 🟡 reserved, starting, cancelling, or completed but not yet accepted/integrated;
 - 🔴 permission, orphaned, blocked, failed, timeout, or any health state requiring attention.
 
@@ -39,4 +39,6 @@ For an unchanged timeout use only the aggregate row, for example:
 
 Use lifecycle terms precisely: `prepared` is reserved and `starting` is dispatching. Count an agent as started only when `execution_started` is true; for host routes that requires attach, and for CLI routes it requires a spawned executor process. `running` without that evidence is not yet working. `permission` needs user action, and `finished` is completed but not coordinator acceptance. A continuation replaces its earlier attempt in agent counts; `summary.attempts` in the full overview retains the audit total. The stage follows confirmed active work, while reserved later roles remain visible without advancing it.
 
-`watch` is event-driven over meaningful lifecycle, health, identity and acceptance changes. It intentionally ignores heartbeat-file churn and streaming token output. Its timeout is a liveness cadence, not evidence of worker progress and not permission to retry.
+`watch` is event-driven over meaningful lifecycle, health, identity and task acceptance changes. It intentionally ignores heartbeat-file churn and streaming token output. Its timeout is a liveness cadence, not evidence of worker progress and not permission to retry.
+
+Task acceptance comes from `task_status`; `summary.verified_tasks` counts distinct verified tasks. Finished worker runs do not have an independent acceptance flag.

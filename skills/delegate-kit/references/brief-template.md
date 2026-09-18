@@ -1,23 +1,20 @@
-# Self-contained briefs
+# Briefs and role results
 
-Give a worker the intended outcome, necessary facts/files, constraints, workspace ownership, acceptance checks and authorized finishing actions. Keep unrelated transcripts and logs out. The runtime adds profile instructions and the canonical result contract; `when` is only for the coordinator.
+For managed work, runtime supplies the specification, work-item ownership, relevant checks, constraints and finishing actions from the contract. A separate brief is optional: add only missing context, useful file pointers or a targeted correction. Avoid copying the contract or full conversation into it.
 
-```
-Task: <bounded outcome>
-Goal: <observable behavior>
-Specification: <essential requirements or accessible spec artifact>
-Relevant context: <files/sources and why they matter>
-Workspace: <absolute local worktree or daemon workspace handle>
-Ownership: <editable scope; preserve other contributors' changes>
-Constraints: <contracts, dependencies, permissions>
-Acceptance: <checks and expected results>
-Finishing actions: <commit/integration/publish only as authorized>
-```
+For standalone read-only work, a brief can be a few sentences: the question, relevant repository/sources, scope, evidence expected and any access constraint. Planning should resolve decisions; research should distinguish verified facts from uncertainty. Reviewers receive the frozen specification and snapshot without the author's reasoning or other reviewers' initial findings.
 
-A writer needs an isolated linked worktree or an owned Paseo workspace. Make referenced artifacts readable within its permissions. Some read-only paths exclude shell; ask the coordinator to run command checks instead of changing access. Worktree isolation does not itself sandbox tools.
+Every role returns `status`, `summary`, `not_verified` and `questions`, plus its own payload:
 
-For a researcher, request primary sources/code evidence and explicit uncertainty. For a planner, request dependencies and criteria, not implementation. For a reviewer, provide the frozen diff and spec without author reasoning or other reviewers' findings. A lens (spec, correctness, standards) can prioritize attention while still allowing material findings outside it.
+| Profile | Payload |
+|---|---|
+| Writer (including custom roles with write access) | `changes`, `checks_run` |
+| Researcher | `sources` |
+| Planner | `plan` |
+| Reviewer / verifier | `findings` |
+| Review lead | `plan`, `findings` |
+| Other read-only roles | Common fields; put the requested outcome in `summary` |
 
-Continuation example: “Check reconnect behavior and update the result; preserve the accepted investigation.” `resume` retains the exact agent and snapshot. Re-review example: “Findings 1 and 3 are fixed in this diff; finding 2 is refuted by this test. Check the new hunks and dispositions.”
+The exact schema is supplied at dispatch and saved in the run directory. Do not add unrelated empty arrays. `checks_run` records worker claims; task verification uses trusted runner receipts separately.
 
-A fresh replacement gets the current worktree/diff, accepted results, the concrete remaining failure and unfinished checks. Verify the prior writer stopped and ownership was released. Independent review always starts with fresh context, even when it uses the same model.
+For a continuation, give the concrete remaining issue and requested evidence. `resume` retains the exact executor session. A different profile/model/harness or independent judgment requires fresh context. Stop and inspect the prior writer before transfer; preserve useful partial changes and the work-item history.

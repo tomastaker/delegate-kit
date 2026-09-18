@@ -7,13 +7,13 @@ Official contracts checked 2026-09-07. Local help inspected: Codex CLI 0.153.4, 
 Fresh: `codex exec --json -m MODEL -c 'model_reasoning_effort="high"' --output-schema SCHEMA -o OUTPUT PROMPT`.
 Resume: `codex exec resume ... SESSION_ID PROMPT`. The adapter sets `sandbox_mode` through `-c` on both paths and disables agents with `agents.enabled=false`. It never enables bypass mode. Model and effort flags are omitted when unspecified.
 
-V2 native dispatch uses the verified host bridge described in [hosts.md](hosts.md), with explicit per-run model/reasoning. Static TOML roles installed under `~/.codex/agents/` are legacy components; never rewrite user roles or rely on their pins for v2. Verify the actual host schema and effective access before dispatch.
+Native dispatch uses the verified host bridge described in [hosts.md](hosts.md), with explicit per-run model/reasoning. The bridge passes resolved settings per run; never rewrite shared user roles. Verify the actual host schema and effective access before dispatch.
 
 Sources: [subagents and precedence](https://learn.chatgpt.com/docs/agent-configuration/subagents), [CLI reference](https://developers.openai.com/codex/cli/reference), and installed `codex exec --help` / `codex exec resume --help`.
 
 ## Claude through Claude Code
 
-`claude -p --output-format json --model MODEL --effort high --json-schema SCHEMA PROMPT`; resume adds `--resume SESSION_ID`. V2 native Markdown definitions are unique per run and carry the resolved model and optional effort. Static legacy roles using `model: inherit` do not select v2 profiles. If the native tool cannot express the chosen effort, use the supported role configuration or external adapter; do not invent a spawn argument.
+`claude -p --output-format json --model MODEL --effort high --json-schema SCHEMA PROMPT`; resume adds `--resume SESSION_ID`. Native Markdown definitions are unique per run and carry the resolved model and optional effort. Preset selection determines the executor. If the native tool cannot express the chosen effort, use the supported role configuration or external adapter; do not invent a spawn argument.
 
 The adapter disables Agent/Task. Writers use acceptEdits and retain command approval requirements. Read-only calls use plan mode plus a read/search/web tool allowlist and an empty strict MCP configuration. Shell checks are run by the coordinator; plan mode alone is not an OS sandbox.
 
@@ -39,7 +39,7 @@ A diagnostic `opencode debug agent RUN_AGENT --pure` reads effective permissions
 
 Sources: [OpenCode CLI](https://opencode.ai/docs/cli/), [permissions](https://opencode.ai/docs/permissions/), [agents](https://opencode.ai/docs/agents/), [Moonshot and Z.AI providers](https://opencode.ai/docs/providers/).
 
-GLM can also be configured behind Claude Code using its Anthropic-compatible endpoint. In v2 define an agent with `executor.harness: "claude"` and the exact configured GLM model ID, using the already configured Claude CLI connection. A different executable does not establish independent model identity. Legacy `family`/`adapter` backend fields belong only to v1 migration. [Z.AI's Claude Code integration](https://docs.z.ai/devpack/tool/claude).
+GLM can also be configured behind Claude Code using its Anthropic-compatible endpoint. In the preset define an agent with `executor.harness: "claude"` and the exact configured GLM model ID, using the already configured Claude CLI connection. A different executable does not establish independent model identity. [Z.AI's Claude Code integration](https://docs.z.ai/devpack/tool/claude).
 
 Direct Kimi CLI execution is intentionally not an external adapter in this release. Current documentation says -p uses auto permission mode and cannot combine with --plan; older kimi-cli documentation describes a different --print interface. OpenCode provides a documented per-agent permission contract for the initial Kimi integration. Native Kimi coordination can still follow the policy through its actual tools. [Kimi command and flag conflicts](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html).
 

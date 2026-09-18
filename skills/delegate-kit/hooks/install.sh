@@ -1,21 +1,14 @@
 #!/usr/bin/env bash
-# Install delegate-kit into Claude Code and Codex CLI:
-#   1. the gate hook   -> ~/.claude/settings.json (PreToolUse) and ~/.codex/hooks.json
-#   2. native subagent roles -> ~/.claude/agents/dk-*.md and ~/.codex/agents/dk-*.toml
-# Idempotent. Backs up every file it edits and prints a diff first.
-#   --claude / --codex   only that harness      --hooks-only / --agents-only   only that half
-#   --dry-run            show diffs, change nothing
+# Install optional gate hooks. Native definitions are generated per run.
+# --claude / --codex select a host; --dry-run previews the changes.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SKILL=$(cd "$HERE/.." && pwd)
 GATE="$HERE/gate.sh"
-AGENTS_DIR="$SKILL/agents"
 CLAUDE_HOME="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CODEX_DIR="${CODEX_HOME:-$HOME/.codex}"
-DO_CLAUDE=1; DO_CODEX=1; DO_HOOKS=1; DO_AGENTS=1; DRY=0
+DO_CLAUDE=1; DO_CODEX=1; DRY=0
 for a in "$@"; do case "$a" in
   --claude) DO_CODEX=0;; --codex) DO_CLAUDE=0;;
-  --hooks-only) DO_AGENTS=0;; --agents-only) DO_HOOKS=0;;
   --dry-run) DRY=1;;
   *) echo "unknown arg $a" >&2; exit 1;; esac; done
 command -v node >/dev/null || { echo "node is required" >&2; exit 1; }
@@ -50,33 +43,6 @@ EOF
   apply "$file" "$tmp"
 }
 
-link_claude_agents() { # symlink the role definitions so edits in the repo take effect immediately
-  local dir="$CLAUDE_HOME/agents"
-  [ $DRY -eq 1 ] || mkdir -p "$dir"
-  for src in "$AGENTS_DIR"/dk-*.md; do
-    local name; name=$(basename "$src"); local dst="$dir/$name"
-    if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then echo "$dst: already linked"; continue; fi
-    if [ -e "$dst" ] && [ ! -L "$dst" ]; then
-      echo "refusing to replace unmanaged $dst" >&2; return 1
-    fi
-    if [ -L "$dst" ]; then
-      case "$(readlink "$dst")" in */delegate-kit/agents/dk-*.md) ;; *) echo "refusing to replace unmanaged symlink $dst" >&2; return 1;; esac
-    fi
-    echo "link $dst -> $src"
-    [ $DRY -eq 1 ] || ln -sfn "$src" "$dst"
-  done
-}
-
-merge_codex_agents() {
-  node "$HERE/native-agents.mjs" install "$SKILL" "$CODEX_DIR" "$DRY"
-}
-
-if [ $DO_HOOKS -eq 1 ]; then
-  [ $DO_CLAUDE -eq 1 ] && merge_hook "$CLAUDE_HOME/settings.json" claude
-  [ $DO_CODEX -eq 1 ] && merge_hook "$CODEX_DIR/hooks.json" codex
-fi
-if [ $DO_AGENTS -eq 1 ]; then
-  [ $DO_CLAUDE -eq 1 ] && link_claude_agents
-  [ $DO_CODEX -eq 1 ] && merge_codex_agents
-fi
-echo "done. Restart running claude/codex sessions for hooks and roles to take effect."
+[ $DO_CLAUDE -eq 1 ] && merge_hook "$CLAUDE_HOME/settings.json" claude
+[ $DO_CODEX -eq 1 ] && merge_hook "$CODEX_DIR/hooks.json" codex
+echo "done. Restart running sessions for hooks to take effect."

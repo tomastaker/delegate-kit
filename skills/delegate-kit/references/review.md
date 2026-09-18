@@ -1,6 +1,6 @@
 # Independent review
 
-Review substantial delegated implementation and changes whose failure modes justify an independent check. Select profiles from the active team's descriptions and explicit defaults. Trivial direct work does not need an agent ceremony. Scope coverage to actual contracts, ambiguity and failure impact; keywords, line counts and family rankings do not pick reviewers.
+Review all substantial final code, including coordinator-authored implementation, and changes whose failure modes justify an independent check. Select profiles from the active team's descriptions and explicit defaults. Trivial direct work does not need an agent ceremony. Scope coverage to actual contracts, ambiguity and failure impact; keywords, line counts and family rankings do not pick reviewers.
 
 Every initial reviewer gets a fresh read-only context, the same frozen specification and diff, and no other reviewer's findings. Freshness and family diversity are different properties. Two agents of the same model can provide independent analysis; agreement alone is not proof.
 
@@ -48,9 +48,17 @@ Reviewers run **in parallel and blind to each other**. A reviewer that reads ano
 
 - Same defect from two reviewers, even in different words → one finding, `raised_by: "A,B"`, one merged claim; corroboration alone does not prove correctness.
 - Raised by one, not mentioned by the other → coverage, not a dispute. Keep it.
-- One says high, the other **explicitly** says the same place is fine → a dispute. Settle it by a command first (a test, a typecheck, `npm ls`); spend a verifier only when a command cannot.
+- One says high, the other **explicitly** says the same place is fine → a dispute. Settle it with appropriate evidence: frozen source for a directly inspectable claim, or a check for runtime behavior; use a verifier for remaining substantive uncertainty.
 - Dedupe by meaning; `file:line` catches only the trivial duplicates.
 - Rank by severity, then by how many slots raised it. Drop nothing silently.
 
 
-After a concrete fix, repeat the affected checks and resume the relevant reviewer with the new hunks and finding dispositions. For disputed claims use reproducible commands first, then a configured verifier if meaningful uncertainty remains. Avoid an unbounded argument to consensus. Accept only after checking the evidence and every required reviewer result.
+After a concrete fix, create a new checkpoint and repeat affected checks and review against that snapshot. Fresh checkpoint review receives the new hunks and finding dispositions. For disputed claims use frozen source or reproducible checks as appropriate, then a configured verifier if meaningful uncertainty remains. Avoid an unbounded argument to consensus. Accept only after checking the evidence and every required reviewer result.
+
+## Checkpoint evidence and dispositions
+
+Bind each reviewer run to the immutable checkpoint with `prepare --checkpoint ID`. Review coverage must address the changed contract, correctness and repository standards, including unnecessary complexity; an extra permanent quality agent is unnecessary. Reviewers use fresh context and never author the code they accept. Economy code requires independent review before task acceptance, just as substantial code from standard, hard or coordinator authors does.
+
+Record every material finding, including unsupported abstractions and duplicated canonical logic. Reconcile with actual evidence. Use `task disposition --session SESSION --task TASK --revision REVISION --checkpoint ID --finding FINDING_ID --resolution refuted|accepted|needs-decision --reason TEXT` to record the decision. A code fix requires a new checkpoint and fresh review; there is no mutable `fixed` disposition. An accepted risk requires explicit rationale and `--authorization FILE` with the user's authorization evidence, and remains an exception to verified acceptance. See [task commands](tasks.md). Never silently discard a finding or treat reviewer agreement as proof. A refutation needs a reproducible reason plus either `--evidence RUNTIME_EVIDENCE_ID` for a passed current approved check, or `--source FILE` with a frozen file/line citation (see task commands). Task acceptance can reuse the authorization recorded for an accepted finding without requesting it again.
+
+`task accept` is the only acceptance gate. It checks required reviewer results, dispositions and runner evidence against the integrated snapshot. A valid worker response alone does not establish acceptance.

@@ -10,9 +10,10 @@ import { resolveExecutor, bridgeInvocation, assertWorkspaceBinding } from './exe
 import { buildCommand, extractResult, validate } from './adapters.mjs';
 import { inspectPermissions, mergeInline } from './opencode-permissions.mjs';
 import { rpcCommand, rpcTurn, ompConfig } from './rpc.mjs';
+import { resultSchema } from './results.mjs';
+import { taskOptions, taskBinding, assertBoundRun, recordRouting, taskSummary, boundContext, recordCompletion } from './tasks.mjs';
 
 const skill = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const schema = readJSON(path.join(skill, 'references/result-schema.json'));
 const active = ['prepared', 'starting', 'running', 'permission', 'cancelling', 'orphaned'];
 const terminal = ['finished', 'failed', 'cancelled', 'timeout', 'blocked'];
 const now = () => new Date().toISOString();
@@ -29,7 +30,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 const dir = id => path.join(home(), 'runs', identifier(id, 'run'));
 const metaFile = id => path.join(dir(id), 'meta.json');
-export const getRun = id => { const m = readJSON(metaFile(id)); check(m.schema_version === 2, `Legacy run ${id}: use agent-run status/resume to preserve its executor`); return m; };
+export const getRun = id => { const m = readJSON(metaFile(id)); check(m.schema_version === 2, `Unsupported saved run format: ${id}`); return m; };
 const save = m => atomicJSON(metaFile(m.id), m);
 function allRuns() {
   const root = path.join(home(), 'runs');
@@ -54,9 +55,9 @@ function signal(m, value) {
   } else check(!groupAlive(m.child_pid), 'Process identity cannot be verified; ownership retained for manual recovery');
 }
 
-// Share admission with legacy agent-run and agent-wt. Fully publish the PID
+// Fully publish the PID
 // before taking the lock so another process never sees an empty owner.
-function admission(fn) {
+export function admission(fn) {
   fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
   const mutex = path.join(home(), 'caps.lock'), temp = `${mutex}.${randomUUID()}`;
   fs.writeFileSync(temp, String(process.pid), { mode: 0o600 });
@@ -85,8 +86,7 @@ function admission(fn) {
 }
 
 // Writer ownership is repository-global, while DELEGATE_KIT_HOME may differ
-// between coordinators. The path, mkdir protocol and lock order are shared with
-// agent-run and agent-wt: state mutex first, repository second. Readers tolerate
+// between coordinators. Lock order is state mutex first, repository second. Readers tolerate
 // the bounded mkdir-to-PID publication window but never steal an unknown owner.
 function repositoryAdmission(cwd, fn) {
   if (!cwd) return fn();
@@ -154,7 +154,7 @@ function releaseWriter(m) {
   if (m.workspace?.lock && readJSON(m.workspace.lock, null)?.id === m.id) fs.rmSync(m.workspace.lock);
 }
 function counts(cwd) {
-  const runs = allRuns().filter(r => r.schema_version === 2 ? active.includes(r.status) : r.status === 'running' && alive(r.pid));
+  const runs = allRuns().filter(r => active.includes(r.status));
   const result = { workers: runs.length, writers: runs.filter(r => r.write).length };
   if (cwd) {
     const common = git(cwd, ['rev-parse', '--git-common-dir']);
@@ -162,7 +162,7 @@ function counts(cwd) {
       const trees = path.join(path.resolve(cwd, common.stdout.trim()), 'worktrees');
       for (const name of fs.existsSync(trees) ? fs.readdirSync(trees) : []) {
         const lock = readJSON(path.join(trees, name, 'delegate-kit.lock'), null);
-        if (lock && !runs.some(r => r.id === lock.id) && (['native', 'v2'].includes(lock.kind) || alive(lock.pid))) { result.workers++; result.writers++; }
+        if (lock && !runs.some(r => r.id === lock.id)) { result.workers++; result.writers++; }
       }
     }
   }
@@ -173,20 +173,23 @@ function enforceCaps(caps, existing, additions) {
 }
 function promptFor(m, brief) {
   const instruction = m.agent.instructions || '';
-  return `You own one bounded task as ${m.role}. Delegation depth is one. Access: ${m.executor.access}. Workspace: ${m.cwd || m.workspace.id}. Preserve other people's changes. Perform only authorized finishing actions.\n${instruction}\n\n${brief}\n\nReturn one JSON object matching this schema. Include evidence and distinguish unverified work. Do not claim acceptance on behalf of the coordinator.\n${JSON.stringify(schema)}`;
+  return `You own one bounded task as ${m.role}. Delegation depth is one. Access: ${m.executor.access}. Workspace: ${m.cwd || m.workspace.id}. Preserve other people's changes. Perform only authorized finishing actions.\n${instruction}\nTask contract: ${boundContext(m)}\n${m.checkpoint ? `Review frozen checkpoint ${m.checkpoint} in ${m.cwd}; contract revision ${m.contract_revision}. Read specification at ${path.join(m.cwd, '..', 'specification.md')}. This binding overrides paths in the brief.` : ''}\n\n${brief}\n\nReturn one JSON object matching this schema. Include evidence and distinguish unverified work. Do not claim acceptance on behalf of the coordinator.\n${JSON.stringify(resultSchema(m.agent))}`;
 }
 export function prepare(options) {
   check(!process.env.DELEGATE_KIT_DEPTH, 'Worker cannot delegate (depth is one)');
   check(options.session, 'prepare requires a saved --session handle');
   identifier(options.task, 'task');
+  options = taskOptions(options);
   const selected = context({ session: options.session, preset: options.preset, taskOnly: options.taskOnly });
   const p = selected.preset;
   const id = options.agent || p.defaults?.[options.role];
   check(id && Object.hasOwn(p.agents, id), 'Select an explicit profile or a configured role default from the active catalog');
   const ids = reviewSet(p, id);
-  const brief = fs.readFileSync(options.brief, 'utf8'); check(brief.trim(), 'Brief is empty');
+  const brief = options.brief ? fs.readFileSync(options.brief, 'utf8') : options.workItem || options.checkpoint ? 'Complete the assigned work from the task contract. Report evidence and any unresolved questions.' : ''; check(brief.trim(), 'Provide a brief or a bound work item/checkpoint');
   const caps = resolveLimits(options.limits || {}, p);
   check(options.stallMs === undefined || Number.isSafeInteger(options.stallMs) && options.stallMs > 0, 'stallMs must be a positive integer');
+  const binding = taskBinding(options, p, ids);
+  if (binding?.cwd) options = { ...options, cwd: binding.cwd };
   const group = randomUUID();
   const rows = ids.map(profile => {
     const agent = p.agents[profile];
@@ -195,14 +198,15 @@ export function prepare(options) {
     assertWorkspaceBinding(executor, ws.path);
     check(executor.transport !== 'paseo' || ws.daemon === executor.capability.daemon, 'Workspace daemon differs from selected Paseo daemon');
     const run = randomUUID();
-    return { schema_version: 2, id: run, parent_session: options.session, task: options.task,
+    return { ...binding, schema_version: 2, id: run, parent_session: options.session, task: options.task,
       budget_task: hash(`${options.session}\0${options.task}`), preset: p.id, preset_hash: selected.revision,
       profile, agent, executor, workspace: ws, cwd: ws.path, write: accessOf(agent) === 'workspace-write', role: agent.role,
       limits: caps, timeout_ms: options.timeoutMs || null, stall_ms: options.stallMs ?? 300000, group, required_profiles: ids, status: 'prepared', created: now(), resume_of: null, attempt_sequence: 1,
       host_attached: false, execution_started_at: null, launch_registration_pending: false, transport_session_id: null, transport_session_file: null, actual_model: null, usage: null, cost_usd: null,
-      result_validated: false, accepted: false, attempt_kind: 'fresh', pid: null };
+      result_validated: false, attempt_kind: 'fresh', pid: null };
   });
   return admission(() => repositoryAdmission(rows.find(m => m.write && m.workspace.owner === 'delegate-kit')?.cwd, () => {
+    check(hash(taskBinding(options, p, ids)) === hash(binding), 'Task binding changed during prepare; retry with current contract');
     enforceCaps(caps, counts(rows[0].workspace.owner === 'delegate-kit' ? rows[0].cwd : null), { workers: rows.length, writers: rows.filter(m => m.write).length });
     const before = budget({ stateDir: home(), task: rows[0].budget_task, limits: caps });
     check(caps.runs === null || before.runs + rows.length <= caps.runs, `Required review set exceeds max ${caps.runs} runs`);
@@ -215,9 +219,11 @@ export function prepare(options) {
       for (const m of rows) {
         reserveWriter(m); reserved.push(m);
         atomicJSON(path.join(dir(m.id), 'preset.snapshot.json'), p);
+        atomicJSON(path.join(dir(m.id), 'result.schema.json'), resultSchema(m.agent));
         fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 });
         save(m);
       }
+      for (const m of rows) recordRouting(m);
     } catch (error) {
       for (const m of reserved) { m.status = 'failed'; m.error = error.message; save(m); releaseWriter(m); }
       throw error;
@@ -231,8 +237,9 @@ export function compact(m) {
     executor: { ...executor, ...(capability ? { host: capability.host, version: capability.version } : {}) }, status: m.status, attempt_kind: m.attempt_kind, resume_of: m.resume_of, attempt_sequence: m.attempt_sequence || null,
     dispatch_token: m.claim || null, transport_session_id: m.transport_session_id, workspace: m.workspace, actual_model: m.actual_model,
     launch_registration_pending: Boolean(m.launch_registration_pending),
-    result_validated: m.result_validated, accepted: m.accepted, result: m.result || null, error: m.error || null,
-    group: m.group, required_profiles: m.required_profiles, created: m.created, started: m.started || null, execution_started: executionStarted(m), execution_started_at: m.execution_started_at || null, finished: m.finished || null,
+    result_validated: m.result_validated, result: m.result || null, error: m.error || null,
+    work_item: m.work_item || null, checkpoint: m.checkpoint || null, contract_revision: m.contract_revision || null,
+    task_result: taskSummary(m.parent_session, m.task), group: m.group, required_profiles: m.required_profiles, created: m.created, started: m.started || null, execution_started: executionStarted(m), execution_started_at: m.execution_started_at || null, finished: m.finished || null,
     logs: dir(m.id), usage: m.usage, cost_usd: m.cost_usd };
 }
 function health(m) {
@@ -334,7 +341,7 @@ export function overview({ session, task } = {}) {
       active: runs.filter(run => activeStates.has(run.status)).length,
       working: runs.filter(run => run.status === 'running' && executionStarted(run)).length,
       completed: statuses.finished,
-      accepted: runs.filter(run => run.accepted).length,
+      verified_tasks: new Set(runs.filter(run => run.task_result.status === 'verified').map(run => run.task)).size,
       attention,
       statuses,
     };
@@ -352,7 +359,7 @@ export function overview({ session, task } = {}) {
       attempt_kind: run.attempt_kind,
       attempt_sequence: run.attempt_sequence,
       resume_of: run.resume_of,
-      accepted: run.accepted,
+      task_status: run.task_result.status,
       dispatch_started: run.started,
       execution_started: executionStarted(run),
       execution_started_at: run.execution_started_at,
@@ -360,7 +367,7 @@ export function overview({ session, task } = {}) {
     }));
     const cursor = hash(JSON.stringify(agents.map(agent => ({
       id: agent.id, status: agent.status, health: agent.health?.state, attention: agent.health?.attention_required,
-      actual_model: agent.actual_model, accepted: agent.accepted, execution_started: agent.execution_started,
+      actual_model: agent.actual_model, task_status: agent.task_status, execution_started: agent.execution_started,
     }))));
     const presets = [...new Set(runs.map(run => run.preset))].sort();
     return { session, task: task || null, presets, stage: stageOf(runs), cursor, observed_at: now(), summary, agents };
@@ -370,13 +377,13 @@ export function overview({ session, task } = {}) {
 function statusIcon(agent) {
   if (agent.health?.attention_required || ['permission', 'orphaned', 'blocked', 'failed', 'timeout'].includes(agent.status)) return '🔴';
   if (agent.status === 'running' && agent.execution_started) return '🟢';
-  if (agent.accepted) return '🟢';
+  if (agent.task_status === 'verified') return '🟢';
   return '🟡';
 }
 
 function compactSnapshot(snapshot) {
   const icon = snapshot.summary.attention > 0 ? '🔴'
-    : snapshot.summary.working > 0 || (snapshot.summary.agents > 0 && snapshot.summary.accepted === snapshot.summary.agents) ? '🟢'
+    : snapshot.summary.working > 0 || (snapshot.agents.length > 0 && snapshot.agents.every(agent => agent.task_status === 'verified')) ? '🟢'
       : '🟡';
   return {
     session: snapshot.session,
@@ -390,7 +397,7 @@ function compactSnapshot(snapshot) {
       started: snapshot.summary.started,
       working: snapshot.summary.working,
       completed: snapshot.summary.completed,
-      accepted: snapshot.summary.accepted,
+      verified_tasks: snapshot.summary.verified_tasks,
       attention: snapshot.summary.attention,
     },
     agents: snapshot.agents.map(agent => ({
@@ -403,7 +410,7 @@ function compactSnapshot(snapshot) {
       attention: Boolean(agent.health?.attention_required),
       actual_model: agent.actual_model,
       execution_started: agent.execution_started,
-      accepted: agent.accepted,
+      task_status: agent.task_status,
     })),
   };
 }
@@ -437,6 +444,7 @@ export function launch(id) {
   check(!process.env.DELEGATE_KIT_DEPTH, 'Worker cannot launch another worker');
   return admission(() => {
     const m = getRun(id);
+    assertBoundRun(m);
     check(m.status === 'prepared', `Run ${id} is ${m.status}; attach/recover it, do not dispatch twice`);
     m.status = 'starting'; m.started = now(); m.claim = randomUUID();
     if (m.executor.transport !== 'cli') {
@@ -461,20 +469,21 @@ export function attach(id, transportId, workspaceId) {
     check(['starting', 'cancelling'].includes(m.status), 'Run must be dispatched before attach');
     check(!m.transport_session_id || m.transport_session_id === transportId, 'Resume must attach the original agent');
     if (m.executor.transport === 'paseo') check(workspaceId === m.workspace.id, 'Paseo returned a different workspace; reconcile before proceeding');
+    if (m.checkpoint && !m.resume_of) check(!allRuns().some(r => r.id !== id && r.executor?.transport === m.executor.transport && r.executor?.capability?.daemon === m.executor.capability?.daemon && r.transport_session_id === transportId), 'Initial checkpoint review requires a fresh executor session');
     check(!allRuns().some(r => r.id !== id && active.includes(r.status) && r.executor?.transport === m.executor.transport && r.executor?.capability?.daemon === m.executor.capability?.daemon && r.transport_session_id === transportId), 'Host agent already belongs to another active attempt');
     m.transport_session_id = transportId; m.host_attached = true; m.execution_started_at ||= now(); if (m.status !== 'cancelling') m.status = 'running'; m.host_checked_at = now(); m.progress_at ||= m.started; save(m); return compact(m);
   });
 }
-function resultFrom(text) {
+function resultFrom(text, agent) {
   let result; try { result = JSON.parse(text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')); } catch { throw new Error('Worker result is not JSON'); }
-  const error = validate(result, schema); check(!error, `Invalid worker result: ${error}`); return result;
+  const error = validate(result, resultSchema(agent)); check(!error, `Invalid worker result: ${error}`); return result;
 }
 function finish(m, result, error, reason) {
   m.finished = now(); m.result = result || null; m.result_validated = Boolean(result);
   m.status = reason || (error || result?.status === 'failed' ? 'failed' : result?.status === 'blocked' ? 'blocked' : 'finished');
   if (error) m.error = diagnostic(error);
-  atomicJSON(path.join(dir(m.id), 'result.json'), { status: m.status, validated: m.result_validated, accepted: false, result: m.result, error: m.error || null });
-  save(m); releaseWriter(m);
+  atomicJSON(path.join(dir(m.id), 'result.json'), { status: m.status, validated: m.result_validated, result: m.result, error: m.error || null });
+  save(m); releaseWriter(m); recordCompletion(m);
   fs.appendFileSync(path.join(home(), 'ledger.jsonl'), JSON.stringify({ schema_version: 2, id: m.id, task: m.task, parent_session: m.parent_session, preset: m.preset, profile: m.profile, status: m.status, resume_of: m.resume_of, transport_session_id: m.transport_session_id, usage: m.usage, cost_usd: m.cost_usd }) + '\n', { mode: 0o600 });
 }
 export function ingest(id, { hostAgent, event, result, stopped = false, dispatchToken, progress }) {
@@ -499,7 +508,7 @@ export function ingest(id, { hostAgent, event, result, stopped = false, dispatch
     }
     check(['complete', 'failed', 'cancelled'].includes(event) && stopped, 'Completion must confirm the host turn/process stopped before releasing ownership');
     let valid = null, error = null;
-    if (event === 'complete') { try { valid = resultFrom(JSON.stringify(result)); } catch (e) { error = e.message; } }
+    if (event === 'complete') { try { valid = resultFrom(JSON.stringify(result), m.agent); } catch (e) { error = e.message; } }
     finish(m, valid, error || (event === 'failed' ? 'Host reported failure' : null), event === 'cancelled' ? 'cancelled' : null);
     return compact(m);
   });
@@ -520,13 +529,15 @@ export function resume(id, briefFile) {
   const brief = fs.readFileSync(briefFile, 'utf8'); check(brief.trim(), 'Brief is empty');
   return admission(() => {
     const prev = getRun(id);
+    assertBoundRun(prev);
     check(terminal.includes(prev.status) && prev.transport_session_id, 'Resume requires a stopped run with an exact saved session');
     check(!allRuns().some(r => active.includes(r.status) && r.parent_session === prev.parent_session && r.transport_session_id === prev.transport_session_id), 'An attempt already owns this executor session');
     if (prev.executor.transport === 'cli' && ['pi', 'omp'].includes(prev.executor.harness)) check(prev.transport_session_file && fs.existsSync(prev.transport_session_file), 'Saved RPC session file is unavailable; do not resume a prefix or last session');
     assertWorkspaceBinding(prev.executor, prev.cwd);
+    if (prev.contract_revision) taskBinding({ session: prev.parent_session, task: prev.task, workItem: prev.work_item, checkpoint: prev.checkpoint, cwd: prev.cwd, resumeReview: Boolean(prev.checkpoint) }, readJSON(path.join(dir(id), 'preset.snapshot.json')), [prev.profile]);
     const attemptSequence = Math.max(0, ...allRuns().filter(run => run.group === prev.group && run.profile === prev.profile).map(run => Number(run.attempt_sequence) || 0)) + 1;
     const m = { ...prev, id: randomUUID(), status: 'prepared', created: now(), started: null, execution_started_at: null, finished: null, error: null,
-      resume_of: id, result: null, result_validated: false, accepted: false, attempt_kind: 'continuation', pid: null,
+      resume_of: id, result: null, result_validated: false, attempt_kind: 'continuation', pid: null,
       attempt_sequence: attemptSequence, pid_fingerprint: null, child_pid: null, child_fingerprint: null, actual_model: null, actual_provider: null,
       usage: null, cost_usd: null, claim: null, invoke: null, host_attached: false, host_checked_at: null, progress_at: null, progress_cursor: null, launch_registration_pending: false, launch_recovery_evidence: null };
     return repositoryAdmission(m.write && m.workspace.owner === 'delegate-kit' ? m.cwd : null, () => {
@@ -535,7 +546,8 @@ export function resume(id, briefFile) {
       try {
         m.budget = budget({ stateDir: home(), task: m.budget_task, ticket: m.profile, retry: true, record: true, limits: m.limits });
         atomicJSON(path.join(dir(m.id), 'preset.snapshot.json'), readJSON(path.join(dir(id), 'preset.snapshot.json')));
-        fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 }); save(m);
+        atomicJSON(path.join(dir(m.id), 'result.schema.json'), resultSchema(m.agent));
+        fs.writeFileSync(path.join(dir(m.id), 'prompt.md'), promptFor(m, brief), { mode: 0o600 }); save(m); recordRouting(m);
       } catch (e) { releaseWriter(m); throw e; }
       return compact(m);
     });
@@ -579,22 +591,6 @@ export function recover(id, { confirmedNotStarted = false, evidence } = {}) {
     return compact(m);
   });
 }
-export function accept(id) {
-  return admission(() => {
-    const m = getRun(id); check(m.status === 'finished' && m.result_validated && m.result.status === 'done', 'Only a validated done result can be accepted');
-    const group = allRuns().filter(r => r.group === m.group);
-    for (const profile of m.required_profiles) {
-      const attempts = group.filter(r => r.profile === profile);
-      const current = currentAttempts(attempts);
-      check(current.length === 1, `Required profile ${profile} has ambiguous attempt lineages`);
-      const latest = current[0];
-      check(latest?.status === 'finished' && latest.result_validated && latest.result?.status === 'done' && !attempts.some(r => active.includes(r.status)), `Required profile ${profile} has not completed its latest attempt validly`);
-      if (profile === m.profile) check(latest.id === m.id, 'Accept the latest attempt, not an earlier result');
-    }
-    m.accepted = true; save(m); return compact(m);
-  });
-}
-
 export async function supervise(id, claim) {
   let m = admission(() => {
     const value = getRun(id); check(value.claim === claim, 'Supervisor claim mismatch');
@@ -627,7 +623,7 @@ export async function supervise(id, claim) {
     else {
       const permissions = e.harness === 'opencode' ? inspectPermissions({ cwd: m.cwd, agentName: `dk-${id}`, model: e.model }) : undefined;
       built = buildCommand({ adapter: e.harness, model: e.model, effort: e.reasoning, provider: e.provider,
-        prompt, write: m.write, resumeId: m.transport_session_id, skillDir: skill, agentName: `dk-${id}`, permissionRules: permissions });
+        prompt, write: m.write, resumeId: m.transport_session_id, skillDir: skill, schemaFile: path.join(dir(id), 'result.schema.json'), agentName: `dk-${id}`, permissionRules: permissions });
       built.args = built.args.map(a => a === '__OUT__' ? path.join(dir(id), 'last-message.txt') : a);
     }
     // Cancellation and child registration share the admission lock.
@@ -657,7 +653,7 @@ export async function supervise(id, claim) {
         value.transport_session_id = state.sessionId || value.transport_session_id;
         value.transport_session_file = state.sessionFile || value.transport_session_file; save(value);
       }), bytes => fs.writeSync(logOut, bytes));
-      result = resultFrom(output.text);
+      result = resultFrom(output.text, m.agent);
       admission(() => { const value = getRun(id); value.usage = output.usage; value.cost_usd = output.usage?.cost?.total ?? null; value.actual_model = output.actual_model; value.actual_provider = output.actual_provider; save(value); });
       child.stdin.end();
       // Pi has no documented EOF disposal guarantee. Its model turn is already
@@ -669,7 +665,7 @@ export async function supervise(id, claim) {
     } else {
       child.stdout.on('data', bytes => fs.writeSync(logOut, bytes)); child.stdin.end();
       const exit = await closed;
-      const extracted = extractResult(e.harness, fs.readFileSync(stdoutFile, 'utf8'), path.join(dir(id), 'last-message.txt'), schema);
+      const extracted = extractResult(e.harness, fs.readFileSync(stdoutFile, 'utf8'), path.join(dir(id), 'last-message.txt'), resultSchema(m.agent));
       admission(() => { const value = getRun(id); value.transport_session_id = extracted.sessionId || value.transport_session_id;
         value.actual_model = extracted.actualModel; value.usage = extracted.usage; value.cost_usd = extracted.cost_usd; save(value); });
       if (!requestedReason) {

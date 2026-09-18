@@ -7,15 +7,16 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { savePreset, loadPreset, copyPreset, context, setDefault, validatePreset, hash, readJSON } from '../skills/delegate-kit/scripts/presets.mjs';
 import { resolveExecutor, bridgeInvocation } from '../skills/delegate-kit/scripts/executors.mjs';
+import { resultSchema } from '../skills/delegate-kit/scripts/results.mjs';
+import { openTask, readTask } from '../skills/delegate-kit/scripts/tasks.mjs';
 import { FrameDecoder, sumUsage } from '../skills/delegate-kit/scripts/rpc.mjs';
-import { migrate } from '../skills/delegate-kit/scripts/migrate.mjs';
-import { prepare, launch, wait, resume, attach, ingest as ingestRaw, dispatchFailed, accept, cancel, recover, status, getRun } from '../skills/delegate-kit/scripts/runtime.mjs';
+import { prepare as prepareRaw, launch, wait, resume, attach, ingest as ingestRaw, dispatchFailed, cancel, recover, status, getRun } from '../skills/delegate-kit/scripts/runtime.mjs';
 
 // Host fixtures echo the per-attempt token supplied in the dispatched prompt.
 function ingest(id, event) {
   const token = getRun(id).claim;
   return ingestRaw(id, { ...event, dispatchToken: token,
-    ...(event.event === 'complete' ? { result: { dispatch_token: token, result: event.result } } : {}) });
+    ...(event.event === 'complete' ? { result: { dispatch_token: token, result: Object.fromEntries(Object.entries(event.result).filter(([key]) => Object.hasOwn(resultSchema(getRun(id).agent).properties, key))) } } : {}) });
 }
 const dk = fileURLToPath(new URL('../skills/delegate-kit/scripts/dk.mjs', import.meta.url));
 const done = { status: 'done', summary: 'verified result', changes: [], checks_run: ['fixture'], not_verified: [], plan: [], findings: [], questions: [], sources: [], next_steps: [] };
@@ -34,7 +35,10 @@ async function sandbox(fn) {
 const fs=require('node:fs'),path=require('node:path');
 const args=process.argv.slice(2),kind=path.basename(process.argv[1])==='pi-worker.mjs'?'pi':path.basename(process.argv[1]);
 const value=f=>args[args.indexOf(f)+1];
-const result=${JSON.stringify(done)};
+const all=${JSON.stringify(done)};
+const fromPrompt=text=>{const schema=JSON.parse(text.split('\\n').filter(line=>line.startsWith('{')&&line.includes('additionalProperties')).at(-1));return Object.fromEntries(Object.entries(all).filter(([key])=>Object.hasOwn(schema.properties,key)))};
+let result;
+if(kind!=='pi'&&kind!=='omp')result=fromPrompt(args.find(arg=>arg.includes('Return one JSON object')));
 if(args.includes('--version')){console.log('fixture 1.0.0');process.exit(0)}
 fs.appendFileSync(${JSON.stringify(path.join(root, 'calls.jsonl'))},JSON.stringify({kind,args})+'\\n');
 if(kind==='pi'||kind==='omp') {
@@ -51,7 +55,7 @@ if(kind==='pi'||kind==='omp') {
  if(q.type==='set_thinking_level')thinkingLevel=q.level;
  if(q.type==='get_state')data={sessionId,sessionFile,model,thinkingLevel:process.env.DK_FAKE_RPC_CASE==='clamp'?'low':thinkingLevel};
  send({id:q.id,type:'response',command:q.type,success:true,...(data?{data}:{})});
- if(q.type==='prompt') {
+ if(q.type==='prompt') { result=fromPrompt(q.message);
  if(process.env.DK_FAKE_RPC_CASE==='late-error'){setTimeout(()=>send({id:q.id,type:'response',command:'prompt',success:false,error:'late scheduling failure'}),20);continue;}
  if(process.env.DK_FAKE_RPC_CASE==='nonterminal')send({type:'agent_end',isTerminal:false,messages:[]});
  setTimeout(()=>{send({type:'agent_start'});const last={role:'assistant',model:model.id,provider:model.provider,stopReason:'stop',content:[{type:'text',text:JSON.stringify(result)}]};const messages=[last];
@@ -102,6 +106,15 @@ function parallel(args) {
   return new Promise(resolve => { const c = spawn(process.execPath, [dk, ...args], { env: process.env }); let out = '', err = ''; c.stdout.on('data', b => out += b); c.stderr.on('data', b => err += b); c.on('close', code => resolve({ code, out, err })); });
 }
 function setup() { savePreset(preset()); setDefault('X1'); return context({ session: 'test:chat' }); }
+function prepare(options) {
+  const p = context({ session: options.session, preset: options.preset }).preset;
+  const a = p.agents[options.agent || p.defaults?.[options.role]];
+  if ((a?.access === 'workspace-write' || a?.role === 'implementer') && !readTask(options.session, options.task, true)) {
+    openTask({ session: options.session, task: options.task, repo: options.cwd, specification: { path: options.brief, goal: 'Fixture', requirements: [{ id: 'R1', text: 'Fixture' }] },
+      work_items: [{ id: 'work', profile: options.agent || p.defaults[options.role], routing: { defined: true, risk: 'ordinary', reason: 'Fixture' }, scope: { include: ['.'] } }], checks: [], review: { required: false, profiles: [] }, trivial: true });
+  }
+  return prepareRaw({ ...options, ...(a?.access === 'workspace-write' || a?.role === 'implementer' ? { workItem: 'work' } : {}) });
+}
 function prep(brief, extra = {}) { return prepare({ session: 'test:chat', task: 'task', agent: 'general', brief, ...extra }).runs[0]; }
 
 test('P01–P08: session selection, task overrides, copy and broken inactive preset isolation', () => sandbox(async ({ state }) => {
@@ -136,7 +149,7 @@ test('P10/R02/R05/R06: strict schema, case collisions, arbitrary specialists and
   }
   const p = preset(); p.agents.docs = { ...agent(), role: 'docs-specialist' }; validatePreset(p);
   assert.equal(resolveExecutor(p.agents.docs).access, 'read-only');
-  p.agents.general.review = { also_run: ['general'] }; assert.throws(() => validatePreset(p), /reference/);
+  p.agents.general.role = 'reviewer'; p.agents.general.review = { also_run: ['general'] }; assert.throws(() => validatePreset(p), /reference/);
   p.agents.second = { ...agent(), role: 'reviewer' }; p.agents.general.review.also_run = ['second', 'second']; assert.throws(() => validatePreset(p), /duplicate/);
   p.agents.general.role = 'reviewer'; p.defaults = {}; p.agents.general.review.also_run = ['second']; p.agents.second.review = { also_run: ['general'] }; assert.throws(() => validatePreset(p), /cycle/);
 }));
@@ -161,7 +174,7 @@ test('R01/L02/L03/S01: actual launch argv and resume preserve immutable preset s
   assert.ok(calls.every(c => c.args.includes(first.executor.model))); assert.equal(calls.length, 2);
   assert.equal(fs.existsSync(path.join(root, 'SHOULD_NOT_EXIST')), false);
   assert.equal(readJSON(path.join(state, 'runs', second.id, 'preset.snapshot.json')).agents.general.executor.model, first.executor.model);
-  assert.equal(accept(second.id).accepted, true);
+  assert.equal(status(second.id).result_validated, true);
 }));
 test('L01/L04/L07: waiting and repeated dispatch never restart; exit zero cannot validate bad output', () => sandbox(async ({ brief, root }) => {
   setup(); process.env.DK_FAKE_DELAY = '500'; const r = prep(brief); launch(r.id);
@@ -215,7 +228,7 @@ test('native bridge: preparation, unique sessions, attach idempotence, correlate
   ingest(r.id, { hostAgent: 'host-agent', event: 'complete', result: done, stopped: true });
   const next = resume(r.id, brief); assert.equal(launch(next.id).invoke.arguments.target, 'host-agent');
   attach(next.id, 'host-agent'); ingest(next.id, { hostAgent: 'host-agent', event: 'complete', result: done, stopped: true });
-  assert.equal(accept(next.id).accepted, true);
+  assert.equal(status(next.id).result_validated, true);
 }));
 test('PA01–PA04: Paseo materializes own settings, preserves daemon/workspace and rejects unsupported harness', () => sandbox(async ({ brief }) => {
   savePreset(preset('X1', agent('codex', { transport: 'paseo', reasoning: 'high' }))); setDefault('X1'); context({ session: 'test:chat' });
@@ -237,21 +250,12 @@ test('L05: writer cancellation preserves partial edits and releases only after p
   await wait(r.id, 300); const stopped = await cancel(r.id); assert.equal(stopped.status, 'cancelled'); assert.equal(stopped.error, null);
   assert.equal(fs.readFileSync(path.join(wt, 'partial.txt'), 'utf8'), 'keep me'); assert.equal(fs.existsSync(getRun(r.id).workspace.lock), false);
 }));
-test('M01/M02: migration materializes shared roles/ladders, rejects ambiguity and is idempotent', () => sandbox(async ({ state }) => {
-  fs.mkdirSync(state, { recursive: true }); const config = { roles: { researcher: { backend: 'codex', model: 'research' } }, profiles: { x1: { roles: { implementer: [{ backend: 'claude', model: 'builder' }, { backend: 'codex', model: 'complex', effort: 'high' }] } } }, limits: { max_runs: 4 } };
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify(config));
-  const plan = migrate(); assert.equal(plan.issues.length, 0); assert.equal(Object.keys(plan.presets[0].agents).length, 3); assert.equal(fs.existsSync(path.join(state, 'presets')), false);
-  migrate({ default_preset: 'x1' }, true); const p = loadPreset('x1'); p.preset.name = 'edited'; savePreset(p.preset, p.revision);
-  assert.equal(migrate({ default_preset: 'x1' }, true).already_migrated, true); assert.equal(loadPreset('x1').preset.name, 'edited');
-  config.profiles.x1.roles.implementer = [{ model: 'ambiguous' }]; fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify(config));
-  assert.ok(migrate().issues.some(i => i.includes('declare parents'))); assert.throws(() => migrate({}, true), /requires decisions/);
-}));
-test('U01/U03/M03: absent setup, relocated package and concrete legacy-run diagnostics', () => sandbox(async ({ state, root }) => {
+test('U01/U03/M03: absent setup, relocated package and unsupported-run diagnostics', () => sandbox(async ({ state, root }) => {
   assert.throws(() => context({ session: 'new' }), /No preset/);
   const moved = path.join(root, 'installed skill'); fs.cpSync(path.dirname(path.dirname(dk)), moved, { recursive: true });
   const help = spawnSync(process.execPath, [path.join(moved, 'scripts/dk.mjs'), 'help'], { cwd: root, env: process.env, encoding: 'utf8' }); assert.equal(help.status, 0, help.stderr);
   fs.mkdirSync(path.join(state, 'runs', 'old'), { recursive: true }); fs.writeFileSync(path.join(state, 'runs', 'old/meta.json'), JSON.stringify({ id: 'old', model: 'saved-model', status: 'running' }));
-  assert.throws(() => status('old'), /Legacy run.*agent-run/);
+  assert.throws(() => status('old'), /Unsupported saved run format/);
 }));
 
 
@@ -263,7 +267,7 @@ test('RPC lifecycle: nonterminal agent_end, late errors, clamped reasoning and u
   for (const scenario of ['late-error', 'clamp', 'protocol', 'eof']) {
     process.env.DK_FAKE_RPC_CASE = scenario;
     const r = prep(brief); launch(r.id); const result = await wait(r.id, 5000);
-    assert.equal(result.status, 'failed', `${scenario}: ${result.error}`); assert.equal(result.accepted, false); if(scenario !== 'eof') assert.equal(result.result_validated, false);
+    assert.equal(result.status, 'failed', `${scenario}: ${result.error}`); if(scenario !== 'eof') assert.equal(result.result_validated, false);
   }
 }));
 
@@ -285,9 +289,9 @@ test('mandatory reviewer cannot be skipped at acceptance and counters include co
   savePreset(p); setDefault('X1'); context({ session: 'test:chat' });
   const group = prepare({ session: 'test:chat', task: 'reviews', agent: 'general', brief });
   launch(group.runs[0].id); await wait(group.runs[0].id, 5000);
-  assert.throws(() => accept(group.runs[0].id), /second/);
-  launch(group.runs[1].id); await wait(group.runs[1].id, 5000); assert.equal(accept(group.runs[0].id).accepted, true);
-  const attempt = resume(group.runs[0].id, brief); assert.throws(() => accept(group.runs[1].id), /latest attempt/); launch(attempt.id); await wait(attempt.id, 5000);
+  assert.equal(status(group.runs[1].id).result_validated, false);
+  launch(group.runs[1].id); await wait(group.runs[1].id, 5000); assert.equal(status(group.runs[1].id).result_validated, true);
+  const attempt = resume(group.runs[0].id, brief); assert.equal(status(attempt.id).result_validated, false); launch(attempt.id); await wait(attempt.id, 5000);
   assert.throws(() => resume(attempt.id, brief), /max 3 runs|retries/);
   const m = getRun(attempt.id); const count = readJSON(path.join(state, 'tasks', `${m.budget_task}.json`));
   assert.equal(count.runs, 3); assert.equal(count.retries.general, 1);
@@ -359,7 +363,7 @@ test('Native continuation rejects a previous turn result even if caller labels i
   assert.throws(() => ingestRaw(next.id, { hostAgent: 'host', dispatchToken: first.dispatch_token, event: 'complete', result: old, stopped: true }), /token/);
   assert.throws(() => ingestRaw(next.id, { hostAgent: 'host', dispatchToken: second.dispatch_token, event: 'complete', result: old, stopped: true }), /token/);
   assert.equal(status(next.id).status, 'running');
-  ingest(next.id, { hostAgent: 'host', event: 'complete', result: done, stopped: true }); assert.equal(accept(next.id).accepted, true);
+  ingest(next.id, { hostAgent: 'host', event: 'complete', result: done, stopped: true }); assert.equal(status(next.id).result_validated, true);
   const rejected = resume(next.id, brief), call = launch(rejected.id);
   assert.equal(dispatchFailed(rejected.id, { dispatchToken: call.dispatch_token, confirmedNotStarted: true, evidence: 'Host rejected follow-up before starting a new turn in existing session' }).status, 'failed');
   assert.equal(getRun(rejected.id).transport_session_id, 'host');
@@ -403,15 +407,6 @@ test('Watchdog detects frozen supervisor heartbeats while the process remains al
   } finally { process.kill(m.pid, 'SIGCONT'); await cancel(r.id); }
 }));
 
-test('Migration retains an explicit parent harness and refuses ambiguous family routing', () => sandbox(async ({ state }) => {
-  fs.mkdirSync(state, { recursive: true });
-  const config = { backends: { custom: { family: 'gpt', adapter: 'opencode' } }, profiles: { x1: { roles: { researcher: { family: 'gpt', runner: 'auto', model: 'provider/model' } } } } };
-  fs.writeFileSync(path.join(state, 'config.json'), JSON.stringify(config));
-  assert.ok(migrate().issues.some(i => i.includes('parent-dependent')));
-  const plan = migrate({ parents: { x1: 'custom' } }); assert.deepEqual(plan.issues, []);
-  assert.equal(plan.presets[0].agents['researcher-1'].executor.harness, 'opencode');
-}));
-
 test('RPC usage includes tool-call turns once and keeps absent measurements unknown', () => {
   const first = { usage: { input: 100, output: 10, totalTokens: 110, cost: { total: 1 } } };
   const last = { usage: { input: 200, output: 20, totalTokens: 220, cost: { total: 2 } } };
@@ -449,8 +444,6 @@ test('Installed CLI runs through a skill-directory symlink', t => {
   assert.equal(result.status, 0, result.stderr);
   assert.ok(JSON.parse(result.stdout).commands.includes('run ID'));
   validatePreset(readJSON(path.join(installed, 'examples/main.json')));
-  const limits = spawnSync(process.execPath, [path.join(linked, 'scripts/limits.mjs'), '--max-workers', '2'], { encoding: 'utf8' });
-  assert.equal(limits.status, 0, limits.stderr); assert.equal(JSON.parse(limits.stdout).workers, 2);
   const pi = spawnSync(process.execPath, [path.join(linked, 'scripts/pi-worker.mjs'), '--sdk', path.join(root, 'absent-sdk.mjs')], { encoding: 'utf8' });
   assert.equal(pi.status, 1); assert.match(pi.stderr, /Pi SDK startup failed/);
 });
@@ -478,9 +471,9 @@ test('Native writers require an enforced binding to the leased worktree before a
   const r = prep(brief, { cwd: wt, capabilities: [host] });
   assert.equal(fs.existsSync(lock), true);
   assert.equal(bridgeInvocation(getRun(r.id), 'task').tool, 'spawn_agent');
-  const legacy = getRun(r.id); delete legacy.executor.capability.workspace_binding;
-  assert.throws(() => bridgeInvocation(legacy, 'task'), /Native writer requires/);
-  legacy.resume_of = 'previous'; legacy.transport_session_id = 'host-agent';
-  assert.throws(() => bridgeInvocation(legacy, 'continue'), /Native writer requires/);
+  const unbound = getRun(r.id); delete unbound.executor.capability.workspace_binding;
+  assert.throws(() => bridgeInvocation(unbound, 'task'), /Native writer requires/);
+  unbound.resume_of = 'previous'; unbound.transport_session_id = 'host-agent';
+  assert.throws(() => bridgeInvocation(unbound, 'continue'), /Native writer requires/);
   await cancel(r.id);
 }));

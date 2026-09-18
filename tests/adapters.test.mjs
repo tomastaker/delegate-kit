@@ -8,9 +8,10 @@ import { spawnSync } from 'node:child_process';
 import { inspectPermissions, narrowPermissions, mergeInline } from '../skills/delegate-kit/scripts/opencode-permissions.mjs';
 import { buildCommand, extractResult } from '../skills/delegate-kit/scripts/adapters.mjs';
 const skillDir = fileURLToPath(new URL('../skills/delegate-kit/', import.meta.url));
-const schema = JSON.parse(fs.readFileSync(path.join(skillDir, 'references/result-schema.json')));
-const done = { status: 'done', summary: 'Checked', changes: [], checks_run: [], not_verified: [], plan: [], findings: [], questions: [], sources: [], next_steps: [] };
-const build = (adapter, extra = {}) => buildCommand({ adapter, model: null, effort: null, prompt: 'task', write: false, skillDir, ...extra });
+import { resultSchema } from '../skills/delegate-kit/scripts/results.mjs';
+const schema = resultSchema({ role: 'researcher' });
+const done = { status: 'done', summary: 'Checked', not_verified: [], questions: [], sources: [] };
+const build = (adapter, extra = {}) => buildCommand({ adapter, model: null, effort: null, prompt: 'task', write: false, skillDir, schemaFile: path.join(skillDir, 'assets/result-fields.json'), ...extra });
 test('Codex inheritance omits model/effort on fresh and resume; sandbox persists', () => {
   for (const resumeId of [null, 'exact-thread']) {
     const b = build('codex', { resumeId });
@@ -45,7 +46,7 @@ test('all adapters reject prose, partial objects and invalid nested findings', (
       ['codex', JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: payload } })],
       ['gemini', JSON.stringify({ type: 'message', role: 'assistant', content: payload })],
       ['opencode', JSON.stringify({ type: 'text', part: { text: payload } })],
-    ]) { const r = extractResult(adapter, stdout, '/nonexistent', schema); assert.equal(r.result.status, 'failed'); assert.ok(r.error); }
+    ]) { const r = extractResult(adapter, stdout, '/nonexistent', schema); assert.equal(r.result, null); assert.ok(r.error); }
   }
 });
 test('Gemini deltas retain session but configured model is not execution identity', () => {
@@ -60,30 +61,8 @@ test('OpenCode emits session from event metadata; unknown actual model stays unk
 });
 test('CLI transport errors are not overridden by a valid done object', () => {
   const stdout = JSON.stringify({ is_error: true, structured_output: done });
-  assert.equal(extractResult('claude', stdout, '/nonexistent', schema).result.status, 'failed');
+  assert.equal(extractResult('claude', stdout, '/nonexistent', schema).result, null);
 });
-test('real supervisor with fake CLI preserves target on resume and fails malformed output', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-adapter-'));
-  try {
-    const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
-    const fake = `#!${process.execPath}\nconst fs=require('node:fs');\nfs.appendFileSync(process.env.ARGS_LOG, JSON.stringify(process.argv.slice(2))+'\\n');\nconsole.log(JSON.stringify({type:'thread.started',thread_id:'thread-original'}));\nconst result=process.env.BAD_RESULT ? 'not-json' : ${JSON.stringify(JSON.stringify(done))};\nconst i=process.argv.indexOf('-o'); if(i>=0)fs.writeFileSync(process.argv[i+1],result);\n`;
-    fs.writeFileSync(path.join(bin, 'codex'), fake, { mode: 0o755 });
-    const env = { ...process.env, PATH: bin, DELEGATE_KIT_HOME: path.join(dir, 'state'), DELEGATE_KIT_DEPTH: '', DELEGATE_KIT_PRESET: 'auto', ARGS_LOG: path.join(dir, 'args') };
-    const run = args => spawnSync(process.execPath, [path.join(skillDir, 'scripts/agent-run'), ...args], { env, encoding: 'utf8', timeout: 15000 });
-    const first = run(['run', '--role', 'planner', '--parent', 'codex', '--backend', 'codex', '--model', 'gpt-6-astra', '--effort', 'high', '--prompt', 'x']);
-    assert.equal(first.status, 0, first.stderr); const result = JSON.parse(first.stdout);
-    assert.equal(result.model, 'gpt-6-astra'); assert.equal(result.sessionId, 'thread-original');
-    fs.writeFileSync(path.join(env.DELEGATE_KIT_HOME, 'config.json'), JSON.stringify({ roles: { planner: { backend: 'claude', model: 'different' } } }));
-    const resumed = run(['resume', result.id, '--prompt', 'followup']); assert.equal(resumed.status, 0, resumed.stderr);
-    assert.equal(JSON.parse(resumed.stdout).model, 'gpt-6-astra');
-    const args = fs.readFileSync(env.ARGS_LOG, 'utf8').trim().split('\n').map(JSON.parse);
-    assert.ok(args[1].includes('thread-original')); assert.ok(args[1].includes('gpt-6-astra'));
-    env.BAD_RESULT = '1';
-    const bad = run(['run', '--role', 'planner', '--backend', 'codex', '--prompt', 'x']);
-    assert.equal(bad.status, 1); assert.equal(JSON.parse(bad.stdout).status, 'failed');
-  } finally { fs.rmSync(dir, { recursive: true }); }
-});
-
 test('Gemini final JSON excludes prose before tool rounds', () => {
   const events = [{type:'message',role:'assistant',delta:true,content:'Inspecting files'}, {type:'tool_use'}, {type:'tool_result'}, {type:'message',role:'assistant',delta:true,content:JSON.stringify(done)}];
   assert.deepEqual(extractResult('gemini', events.map(JSON.stringify).join('\n'), '/nonexistent', schema).result, done);
@@ -118,20 +97,4 @@ test('OpenCode preflight uses diagnostic only and withholds failed output', () =
 
 test('OpenCode numeric patterns cannot reorder a denial into an allow', () => {
   assert.throws(() => narrowPermissions([{permission:'*',pattern:'*',action:'allow'}, {permission:'grep',pattern:'123',action:'deny'}], false), /order cannot be represented safely/);
-});
-test('detached OpenCode records a failed second preflight before returning', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-detached-'));
-  try {
-    const bin = path.join(dir, 'bin'); fs.mkdirSync(bin);
-    const count = path.join(dir, 'count');
-    fs.writeFileSync(path.join(bin, 'opencode'), `#!${process.execPath}\nconst fs=require('node:fs'); const file=process.env.PROBE_COUNT; const n=fs.existsSync(file)?Number(fs.readFileSync(file)):0;fs.writeFileSync(file,String(n+1));if(n)process.exit(1);console.log(JSON.stringify({permission:[{permission:'*',pattern:'*',action:'allow'}]}));`, {mode:0o755});
-    const state = path.join(dir, 'state');
-    const result = spawnSync(process.execPath, [path.join(skillDir,'scripts/agent-run'), 'run','--role','planner','--backend','kimi','--model','provider/model','--prompt','x','--detach'], {encoding:'utf8',timeout:15000,env:{...process.env,PATH:bin,PROBE_COUNT:count,DELEGATE_KIT_HOME:state,DELEGATE_KIT_DEPTH:'',DELEGATE_KIT_PRESET:'auto'}});
-    assert.equal(result.status, 1, result.stdout + result.stderr);
-    assert.match(result.stderr, /did not start/);
-    const runs = fs.readdirSync(path.join(state,'runs'));
-    assert.equal(runs.length,1);
-    const meta = JSON.parse(fs.readFileSync(path.join(state,'runs',runs[0],'meta.json')));
-    assert.equal(meta.status,'failed'); assert.match(meta.error,/permissions/);
-  } finally { fs.rmSync(dir,{recursive:true}); }
 });

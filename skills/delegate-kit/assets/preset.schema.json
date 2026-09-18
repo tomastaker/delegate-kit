@@ -162,12 +162,47 @@
             "required": [
               "also_run"
             ]
+          },
+          "routing": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tier": {
+                "enum": [
+                  "economy",
+                  "standard",
+                  "hard"
+                ]
+              }
+            },
+            "required": [
+              "tier"
+            ]
           }
         },
         "required": [
           "role",
           "when",
           "executor"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "review"
+              ]
+            },
+            "then": {
+              "properties": {
+                "role": {
+                  "const": "reviewer"
+                },
+                "access": {
+                  "const": "read-only"
+                }
+              }
+            }
+          }
         ]
       }
     },

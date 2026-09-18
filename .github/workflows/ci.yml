@@ -24,18 +24,11 @@ jobs:
           shellcheck -S warning $files
       - name: Node syntax
         run: |
-          node --check skills/delegate-kit/scripts/agent-run
-          for f in skills/delegate-kit/scripts/*.mjs skills/delegate-kit/hooks/*.mjs; do node --check "$f"; done
-      - name: Writer caps and detach refusal
-        run: bash tests/caps.sh
+          for f in skills/delegate-kit/scripts/*.mjs; do node --check "$f"; done
       - name: Routing policy
         run: bash tests/route.sh
-      - name: Completion delivery
-        run: bash tests/delivery.sh
       - name: Safety gate
         run: bash tests/gate.sh
-      - name: Worktree inspect for reruns
-        run: bash tests/inspect.sh
       - name: SKILL.md stays a policy, not a manual
         run: |
           size=$(wc -c < skills/delegate-kit/SKILL.md)
@@ -43,7 +36,7 @@ jobs:
           test "$size" -le 8000
       - name: Validate packaged schemas and example JSON
         run: |
-          python3 -m json.tool skills/delegate-kit/references/result-schema.json >/dev/null
+          python3 -m json.tool skills/delegate-kit/assets/result-fields.json >/dev/null
           python3 -m json.tool skills/delegate-kit/assets/preset.schema.json >/dev/null
           python3 -m json.tool skills/delegate-kit/examples/config.json >/dev/null
           node skills/delegate-kit/scripts/dk.mjs presets validate --file skills/delegate-kit/examples/main.json

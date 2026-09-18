@@ -1,5 +1,6 @@
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { sumMeasurements } from './adapters.mjs';
 import { check } from './presets.mjs';
 import { installedPiSDK } from './pi-worker.mjs';
 
@@ -160,13 +161,12 @@ export function rpcTurn(child, executor, prompt, onState, onLog, timeoutMs = 300
 // agent_end contains the current turn's messages, also emitted by message_end.
 // Aggregate one source only; any missing component stays unknown.
 export function sumUsage(messages) {
-  if (!messages?.length || messages.some(m => !m.usage)) return null;
-  const sum = values => {
-    if (values.every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0)) return values.reduce((a, b) => a + b, 0);
-    if (values.every(v => v && typeof v === 'object' && !Array.isArray(v))) {
-      return Object.fromEntries([...new Set(values.flatMap(v => Object.keys(v)))].map(k => [k, sum(values.map(v => v[k]))]));
-    }
-    return null;
-  };
-  return sum(messages.map(m => m.usage));
+  const unique = new Map();
+  for (const message of messages || []) {
+    // Provider response IDs identify replies; equal token counts do not.
+    const id = message.id || message.responseId;
+    const key = id ? JSON.stringify([message.provider, message.model, id]) : Symbol();
+    unique.set(key, message);
+  }
+  return sumMeasurements([...unique.values()].map(message => message.usage));
 }

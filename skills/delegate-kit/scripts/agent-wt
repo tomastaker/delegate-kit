@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-wt — git worktrees for delegate-kit writers, with a write-lock that agent-run honours.
+# agent-wt — git worktrees for delegate-kit writers, with ownership managed by the runtime.
 # Worktrees live next to the repo: <repo-parent>/<repo-name>.worktrees/<name>, branch dk/<name>.
 set -euo pipefail
 
@@ -9,24 +9,12 @@ agent-wt create <name> [--base REF]   create worktree + branch dk/<name> (defaul
 agent-wt list                         list worktrees with lock/owner/status
 agent-wt status <name>                path, branch, lock, dirty files, commits ahead of base
 agent-wt diff <name> [--base REF]     frozen diff: base..HEAD plus uncommitted changes
-agent-wt lock <name> [--label TXT] [--max-writers N] [--max-workers N]
-                                      take the write-lock for a native subagent the parent spawns itself;
-                                      honours explicit flags, DELEGATE_KIT_MAX_* and config.limits; no default cap
-agent-wt release <name> [--force]     remove the write-lock (only if its process is gone or --force)
-agent-wt remove <name> [--force]      remove worktree and branch (refuses if locked or dirty unless --force)
+agent-wt remove <name> [--force]      remove worktree and branch (refuses any owned worktree; --force permits dirty removal)
 agent-wt cleanup                      remove worktrees whose branch is merged into the base and are unlocked
 EOF
 }
 
 SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
-STATE_DIR="${DELEGATE_KIT_HOME:-$HOME/.delegate-kit}"
-CAPS_MUTEX=""
-GLOBAL_CAPS_MUTEX=""
-release_caps_mutex() {
-  if [ -n "$CAPS_MUTEX" ] && [ "$(cat "$CAPS_MUTEX/pid" 2>/dev/null || true)" = "$$" ]; then rm -rf "$CAPS_MUTEX"; fi; CAPS_MUTEX=""
-  if [ -n "$GLOBAL_CAPS_MUTEX" ] && [ "$(cat "$GLOBAL_CAPS_MUTEX" 2>/dev/null || true)" = "$$" ]; then rm -f "$GLOBAL_CAPS_MUTEX"; fi; GLOBAL_CAPS_MUTEX=""
-}
-trap release_caps_mutex EXIT
 die() { echo "agent-wt: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 need git; need jq; need node
@@ -38,7 +26,7 @@ main_root() {
   dirname "$common"
 }
 wt_base_dir() { local r; r=$(main_root); echo "$(dirname "$r")/$(basename "$r").worktrees"; }
-wt_path() { echo "$(wt_base_dir)/$1"; }
+wt_path() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid worktree name"; echo "$(wt_base_dir)/$1"; }
 wt_branch() { echo "dk/$1"; }
 lock_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(cd "$p" && git rev-parse --absolute-git-dir)/delegate-kit.lock"; }
 base_ref_file() { local p; p=$(wt_path "$1"); [ -d "$p" ] || return 1; echo "$(cd "$p" && git rev-parse --absolute-git-dir)/delegate-kit.base"; }
@@ -47,14 +35,10 @@ lock_info() {
   local lf; lf=$(lock_file "$1" 2>/dev/null) || { echo "no-lock"; return; }
   lock_state "$lf"
 }
-lock_state() { # state of one lock file: unlocked | locked(...) | stale-lock(...)
+lock_state() {
   local lf=$1
   [ -f "$lf" ] || { echo "unlocked"; return; }
-  local kind pid; kind=$(jq -r '.kind // "process"' "$lf"); pid=$(jq -r '.pid // empty' "$lf")
-  # A native lock has no process behind it: the parent holds it on behalf of its own
-  # subagent and releases it by hand. It is live until someone releases it.
-  if [ "$kind" = "native" ] || [ "$kind" = "v2" ]; then echo "locked($kind, label=$(jq -r '.label // "-"' "$lf"), since=$(jq -r '.since // "?"' "$lf"))"; return; fi
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "locked(run=$(jq -r .id "$lf"), pid=$pid)"; else echo "stale-lock(run=$(jq -r .id "$lf"))"; fi
+  echo "locked(run=$(jq -r '.id // "unknown"' "$lf"))"
 }
 
 cmd_create() {
@@ -107,105 +91,14 @@ cmd_diff() {
   local base; base=$(cat "$(base_ref_file "$name")" 2>/dev/null || echo "")
   while [ $# -gt 0 ]; do case "$1" in --base) base=$2; shift 2;; *) die "unknown option $1";; esac; done
   [ -n "$base" ] || die "no base recorded; pass --base REF"
-  (cd "$p" && git add -N . >/dev/null 2>&1 || true; git diff "$base")
-}
-
-# Native writers share both mutexes with external starts: machine first, repo second.
-acquire_global_caps_mutex() {
-  mkdir -p "$STATE_DIR"
-  local file="$STATE_DIR/caps.lock" pid
-  for _ in $(seq 1 300); do
-    if (set -o noclobber; echo "$$" > "$file") 2>/dev/null; then GLOBAL_CAPS_MUTEX="$file"; return; fi
-    pid=$(cat "$file" 2>/dev/null || true)
-    # noclobber may expose the new file just before its PID payload is visible.
-    [ -z "$pid" ] && { sleep 0.05; continue; }
-    if ! kill -0 "$pid" 2>/dev/null; then die "stale or invalid admission lock $file; verify no operation is running, then remove it explicitly before retrying"; fi
-    sleep 0.05
-  done
-  [ -n "${pid:-}" ] || die "stale or invalid admission lock $file; verify no operation is running, then remove it explicitly before retrying"
-  die "another worker has held $file for 15s; verify the owner before removing a stale lock"
-}
-known_workers() {
-  local common; common=$(git rev-parse --git-common-dir); common=$(cd "$common" && pwd)
-  node --input-type=module - "$STATE_DIR" "$common" <<'JS'
-import fs from 'node:fs';
-import path from 'node:path';
-const [stateDir, common] = process.argv.slice(2);
-const alive = pid => { if (!Number.isInteger(pid) || pid < 1) return false; try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
-const entries = dir => { try { return fs.readdirSync(dir); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } };
-const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return null; throw error; } };
-const runs = entries(path.join(stateDir, 'runs')).map(id => read(path.join(stateDir, 'runs', id, 'meta.json'))).filter(run => run && (run.schema_version === 2 ? ['prepared', 'starting', 'running', 'permission', 'cancelling', 'orphaned'].includes(run.status) : run.status === 'running' && alive(run.pid)));
-const counts = { workers: runs.length, writers: runs.filter(run => run.write).length };
-for (const name of entries(path.join(common, 'worktrees'))) {
-  const lock = read(path.join(common, 'worktrees', name, 'delegate-kit.lock'));
-  if (lock && !runs.some(run => run.id === lock.id || (run.write && run.cwd === lock.cwd)) && (['native', 'v2'].includes(lock.kind) || alive(lock.pid))) {
-    counts.workers += 1;
-    counts.writers += 1;
-  }
-}
-console.log(JSON.stringify(counts));
+  node --input-type=module - "$SCRIPTS/checkpoints.mjs" "$p" "$base" <<'JS'
+import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
+const [module, cwd, base] = process.argv.slice(2);
+const { contentTree } = await import(pathToFileURL(module));
+const diff = spawnSync('git', ['diff', base, contentTree(cwd)], { cwd, stdio: 'inherit' });
+process.exitCode = diff.status ?? 1;
 JS
-}
-# The count-then-lock window: eight concurrent `lock --max-writers 1` all counted zero and
-# all succeeded. `mkdir` is atomic, so the directory is the mutex; a dead pid inside is stale.
-acquire_caps_mutex() {
-  local d; d="$(git rev-parse --git-common-dir)"; d="$(cd "$d" && pwd)/delegate-kit.caps.lock"
-
-  for _ in $(seq 1 300); do
-    if mkdir "$d" 2>/dev/null; then echo "$$" > "$d/pid"; CAPS_MUTEX="$d"; return; fi
-    local pid; pid=$(cat "$d/pid" 2>/dev/null || true)
-    [ -z "$pid" ] && { sleep 0.05; continue; }
-    if ! kill -0 "$pid" 2>/dev/null; then die "stale or invalid repository admission lock $d; verify no operation is running, then remove it explicitly before retrying"; fi
-    sleep 0.05
-  done
-  [ -n "${pid:-}" ] || die "stale or invalid repository admission lock $d; verify no operation is running, then remove it explicitly before retrying"
-  die "another agent-wt (pid $pid) has held $d for 15s; if it is stuck, kill it or remove the directory"
-}
-cmd_lock() {
-  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
-  local label="native-subagent"
-  local limit_args=(--config "$STATE_DIR/config.json")
-  while [ $# -gt 0 ]; do case "$1" in --label) label=$2; shift 2;; --max-writers|--max-workers) [ -n "${2:-}" ] || die "$1 needs a number"; limit_args+=("$1" "$2"); shift 2;; *) die "unknown option $1";; esac; done
-  local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name (create it first)"
-  local lf; lf=$(lock_file "$name")
-  local limits cap workers_cap
-  limits=$(node "$SCRIPTS/limits.mjs" "${limit_args[@]}") || die "invalid limits configuration"
-  cap=$(jq -r '.writers // empty' <<<"$limits")
-  workers_cap=$(jq -r '.workers // empty' <<<"$limits")
-  acquire_global_caps_mutex
-  acquire_caps_mutex
-  # Ownership must be checked under the mutex, including concurrent locks of one worktree.
-  if [ -f "$lf" ]; then
-    local info; info=$(lock_info "$name")
-    [[ "$info" == locked* ]] && die "worktree is already $info; one writer per worktree"
-    rm -f "$lf"   # stale process lock
-  fi
-  local counts workers writers
-  counts=$(known_workers) || die "cannot count active workers"
-  workers=$(jq -r '.workers' <<<"$counts")
-  writers=$(jq -r '.writers' <<<"$counts")
-  if [ -n "$cap" ] && [ "$writers" -ge "$cap" ]; then
-    die "max $cap concurrent writers reached ($writers known writers). Adjust the explicit limit only when the task warrants it."
-  fi
-  if [ -n "$workers_cap" ]; then
-    [ "$workers" -lt "$workers_cap" ] || die "max $workers_cap active workers reached ($workers known workers)"
-  fi
-  jq -n --arg id "native-$(date +%Y%m%d%H%M%S)" --arg label "$label" --arg cwd "$p" --arg since "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '{id:$id,kind:"native",label:$label,role:"implementer",pid:null,cwd:$cwd,since:$since}' > "$lf"
-  release_caps_mutex
-  jq -n --arg n "$name" --arg p "$p" --arg l "$label" '{name:$n,path:$p,locked_for:$l,release_with:("agent-wt release " + $n)}'
-}
-
-cmd_release() {
-  local name=${1:-}; [ -n "$name" ] || die "name required"; shift || true
-  local force=0; [ "${1:-}" = "--force" ] && force=1
-  local lf; lf=$(lock_file "$name") || die "no such worktree: $name"
-  [ -f "$lf" ] || { echo "already unlocked"; return; }
-  [ "$(jq -r '.kind // empty' "$lf")" != "v2" ] || die "v2 run owns this worktree; use dk.mjs cancel/recover before release"
-  local pid; pid=$(jq -r '.pid // empty' "$lf")
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ $force -eq 0 ]; then die "lock held by live process $pid; use --force after stopping the worker (agent-run kill <id>)"; fi
-  # native locks have no process: releasing one is the parent saying its subagent is done
-  rm -f "$lf"; echo "released"
 }
 
 cmd_remove() {
@@ -213,11 +106,10 @@ cmd_remove() {
   local force=0; [ "${1:-}" = "--force" ] && force=1
   local p; p=$(wt_path "$name"); [ -d "$p" ] || die "no such worktree: $name"
   local lock; lock=$(lock_info "$name")
-  [[ "$lock" != locked\(v2,* ]] || die "v2 run owns this worktree; use dk.mjs cancel/recover before removal"
-  [[ "$lock" == locked* ]] && [ $force -eq 0 ] && die "worktree is $lock; stop the worker first"
+  [[ "$lock" == locked* ]] && die "worktree is $lock; use dk.mjs cancel/recover before removal"
   local dirty; dirty=$(cd "$p" && git status --porcelain | wc -l | tr -d ' ')
   [ "$dirty" != "0" ] && [ $force -eq 0 ] && die "worktree has $dirty uncommitted changes; commit/stash or use --force"
-  git worktree remove ${force:+--force} "$p"
+  if [ "$force" -eq 1 ]; then git worktree remove --force "$p"; else git worktree remove "$p"; fi
   git branch -D "$(wt_branch "$name")" >/dev/null 2>&1 && echo "removed worktree and branch dk/$name" || echo "removed worktree (branch kept or absent)"
 }
 
@@ -245,8 +137,6 @@ case "${1:-}" in
   list) cmd_list;;
   status) shift; cmd_status "$@";;
   diff) shift; cmd_diff "$@";;
-  lock) shift; cmd_lock "$@";;
-  release) shift; cmd_release "$@";;
   remove) shift; cmd_remove "$@";;
   cleanup) cmd_cleanup;;
   *) usage; exit 1;;

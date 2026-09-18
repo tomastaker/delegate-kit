@@ -15,7 +15,6 @@ The coordinator selects a profile semantically from the active catalog. Code val
 <dk> result RUN_ID
 <dk> resume RUN_ID --brief /abs/follow-up.md
 <dk> run NEW_ATTEMPT_ID
-<dk> accept NEW_ATTEMPT_ID
 ```
 
 Use a reliable namespaced host chat ID. Without one, omit `--session` on context open once and preserve the generated handle. Cwd and transient shell PIDs do not identify a chat. Prepare and catalog require the retained handle.
@@ -28,13 +27,13 @@ A role default is used only when `--agent` is omitted and `--role` is given. Mis
 
 Optional preset `limits` accepts positive `max_workers`, `max_writers`, `max_runs`, and nonnegative `max_retries`. No implicit worker count applies. `max_runs` counts reservations, including continuations, within a namespaced chat/task budget. `max_retries` counts continuations per profile in that task. Fresh runs and continuations are marked separately in metadata. Failed or cancelled reservations do not refund attempt limits. This conservative rule prevents a crash from granting an uncounted model call.
 
-Prepare/resume reserve concurrency before dispatch, including native read-only agents. Release unused reservations with `cancel`. Global known worker counts include v1 external runs and native worktree locks; the host's own capacity also applies. Explicit CLI/environment limits follow the legacy precedence (call > environment > preset); do not raise them without user authorization. Status/wait/result do not consume attempts.
+Prepare/resume reserve concurrency before dispatch, including native read-only agents. Release unused reservations with `cancel`. Global counts include runtime reservations and owned worktrees; the host's own capacity also applies. Explicit CLI/environment limits follow precedence (call > environment > preset); do not raise them without user authorization. Status/wait/result do not consume attempts.
 
-`review.also_run` recursively expands a required set. References must be unique, acyclic and read-only reviewers. Prepare validates all routes and reserves the whole set or refuses it before dispatch. Run each returned ID independently. `accept` requires a valid done result for every required profile in the group. It does not mean the runtime ran acceptance tests: the coordinator verifies evidence before calling it.
+`review.also_run` recursively expands a required set. The source profile and all referenced profiles must be read-only reviewers; references must be unique and acyclic. This is reviewer-set composition, never an implementer-to-reviewer dependency. Prepare validates all routes and reserves the whole set or refuses it before dispatch. Run each returned ID independently. `task accept` requires valid done results from the mandatory reviewer set bound to the current checkpoint, as well as the task checks.
 
 ## Lifecycle and recovery
 
-States: prepared, starting, running, permission, cancelling, orphaned, finished, blocked, failed, cancelled, timeout. Finished means a terminal turn with valid result; `accepted` records the separate coordinator decision. Provider errors or invalid JSON fail even with exit code zero. Full logs stay in the private run folder, separate from the compact result.
+States: prepared, starting, running, permission, cancelling, orphaned, finished, blocked, failed, cancelled, timeout. Finished means a terminal turn with a valid role-specific result; only task acceptance records verified completion. Provider errors or invalid JSON fail even with exit code zero. Full logs stay in the private run folder, separate from the compact result.
 
 A timeout of `wait` returns `wait_timed_out: true` with current state and leaves the worker alive. An optional `prepare --timeout-ms N` is a process deadline; there is no automatic idle kill. Repeated `run` on an already dispatched reservation refuses a duplicate. Native dispatch with an unknown outcome must be reconciled at the host before attach or recovery.
 
@@ -46,6 +45,20 @@ Native dispatch failures and late IDs are handled through [host reconciliation](
 
 `cancel` preserves work and retains ownership until the process group stops. If a supervisor disappears, status becomes orphaned; inspect logs and run `cancel` or `recover` when process identity/termination is established. PID birth checks prevent signalling an unrelated reused PID. If the supervisor died while child registration was pending, ordinary recovery refuses to release ownership because the child PID is unknown. After explicit process inspection proves no worker started, use `recover ID --confirmed-not-started --evidence FILE`; the evidence is retained with the run. Uncertain live descendants retain the lease for manual diagnosis. A stale operation mutex is a visible diagnostic; confirm the owning operation stopped before removing it.
 
-Local writers require a linked worktree and use the existing `delegate-kit.lock`. The v2 runtime owns its lease; `agent-wt release/remove` cannot clear an active v2 lease. A Paseo workspace has a daemon-scoped lease and remains owned by Paseo; local cleanup never removes it.
+Local writers require a linked worktree and use the existing `delegate-kit.lock`. The runtime owns its lease; `agent-wt remove` refuses an owned worktree even with `--force`. A Paseo workspace has a daemon-scoped lease and remains owned by Paseo; local cleanup never removes it.
 
-Legacy commands are documented in [migration.md](migration.md). Do not use `agent-run route` to resolve a v2 preset.
+## Assignment and task acceptance
+
+Evaluate four independent axes before selecting implementation: **determination** (remaining decisions), **risk** (changed invariants and failure consequences), **verifiability** (what detects an incorrect requested result), and **capabilities** (files, tools, network and environment). Record a short reason. A path containing `auth` does not make a copy edit critical; a short transaction patch can change a critical invariant. Lint/typecheck alone cannot establish business behavior.
+
+Optional profile `routing: {"tier":"economy"}` declares assignment constraints. `standard` and `hard` are also supported; omission imposes no economy-specific constraints. IDs and model names carry no special policy meaning. Use economy writers only when decisions are settled, scope is bounded, behavioral risk is low, meaningful checks exist and required capabilities are available. An explicit economy request still needs these conditions; explain a conflict instead of concealing it. After planning, reassess all four axes. Economy researchers can collect bounded facts without satisfying writer-specific checks. Critical work can go directly to a suitable configured profile. Without a suitable hard profile, use another configured capable profile or report a blocker; never change provider/model/account automatically.
+
+For managed code work, open a contract, prepare linked work items, then use `task check` on the integrated result. Read [tasks.md](tasks.md) for the complete contract example, revision requirements, CLI sequence and evidence lifecycle.
+
+Checkpoint review accepts only read-only reviewer profiles. Immutable snapshot identity covers the actual result, including relevant uncommitted/untracked content. Evidence belongs to that version: further edits, integration or cherry-picks require a new checkpoint and affected verification/review. Batch several small changes in one checkpoint when coverage remains clear. Final task acceptance uses the current merged result; individually finished runs are insufficient. Acceptance refusal must expose missing/stale evidence rather than turn an unchecked run into success.
+
+`verify` executes a declared check through trusted runtime code and records its command, result and checkpoint. Model `checks_run` strings do not substitute for actual execution. `task check` reuses intact evidence for an unchanged checkpoint; pass `--rerun` when external dependencies or environment changed. For UI behavior, include a real browser scenario and visual inspection; shell-less OMP/Pi writers require coordinator/runner verification. A green unrelated command does not establish the changed contract.
+
+Use `task submit --revision REVISION --outcome failed --reason ...` for a concrete semantic rejection of the work item, `infrastructure` for a transport/environment failure. The initial submission plus one targeted correction is the default allowance; internal test iterations are not submissions. After two semantic failures, `task escalate --session SESSION --task TASK --revision REVISION --work-item ITEM --agent PROFILE --reason ...` records the evidence and chosen configured replacement. More retries need a reasoned escalation decision, not a new item ID that erases history. The preset's `max_retries` continues to count profile continuations independently.
+
+Claims identify shared ports, mutable databases, caches or other exclusive resources. Worktrees isolate files, not these resources. Resolve collisions by distinct resources or serialize only the conflicting operation; preserve other independent parallel work. This is coordination under the documented tool/OS trust boundary, not a sandbox against arbitrary same-user processes.
