@@ -61,6 +61,9 @@ test('watch is compact by default and --full preserves diagnostic detail', () =>
       actual_model: 'gpt-6-astra',
     }));
     saveRun(home, fixture('reviewer-hard', 'prepared'));
+    saveRun(home, fixture('prior-attempt', 'failed', { executor: { harness: 'claude', transport: 'cli', model: 'test', billing: 'subscription' }, cost_usd: 0.2 }));
+    saveRun(home, fixture('retry', 'finished', { resume_of: 'prior-attempt', attempt_kind: 'continuation', attempt_sequence: 2,
+      executor: { harness: 'claude', transport: 'cli', model: 'test', billing: 'subscription' }, cost_usd: 0.3, usage: { input_tokens: 7 } }));
 
     const compact = run(home, ['watch', '--session', 'codex:test', '--task', 'status-ui', '--timeout-ms', '5']);
     assert.equal(compact.summary.icon, '🟢');
@@ -71,6 +74,11 @@ test('watch is compact by default and --full preserves diagnostic detail', () =>
     assert.equal(Object.hasOwn(compact, 'presets'), false);
     assert.equal(Object.hasOwn(compact.summary, 'statuses'), false);
     assert.equal(Object.hasOwn(compact.agents[0], 'requested_model'), false);
+    assert.equal(compact.accounting.attempts, 4);
+    assert.equal(compact.accounting.by_billing.subscription.estimated_usd, 0.5);
+    assert.equal(compact.accounting.by_billing.subscription.reported_usd, null);
+    assert.equal(compact.accounting.cost_unknown_runs, 2);
+    assert.equal(compact.agents.find(a => a.id === 'retry').usage.input_tokens, 7);
 
     const unchanged = run(home, ['watch', '--session', 'codex:test', '--task', 'status-ui', '--after', compact.cursor, '--timeout-ms', '5']);
     assert.equal(unchanged.changed, false);
@@ -81,7 +89,7 @@ test('watch is compact by default and --full preserves diagnostic detail', () =>
     const full = run(home, ['watch', '--session', 'codex:test', '--task', 'status-ui', '--timeout-ms', '5', '--full']);
     assert.equal(typeof full.observed_at, 'string');
     assert.deepEqual(full.presets, ['main-test']);
-    assert.equal(full.summary.attempts, 2);
+    assert.equal(full.summary.attempts, 4);
     assert.equal(full.agents[0].requested_model, 'gpt-6-astra');
     assert.equal(Object.hasOwn(full.agents[0], 'icon'), false);
   } finally {

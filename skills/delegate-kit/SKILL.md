@@ -6,34 +6,32 @@ license: MIT
 
 # Delegate Kit
 
-The current chat coordinates; a preset configures helpers without changing the chat model. Managed workers do not delegate further.
+The current chat chooses assignments and judges results. Delegate Kit owns CLI/RPC execution, saved state and verification. The team preset configures helpers without changing the chat model. Managed workers do not delegate further.
 
-## Select the team and scope
+## Select the team
 
-For first setup or creating/editing/copying a preset, read [setup.md](references/setup.md). Reuse a valid saved selection. Invoke `scripts/dk.mjs` with Node using this installed skill's absolute path; there is no global `dk` command.
+For first setup or preset changes, read [setup.md](references/setup.md). Otherwise reuse the saved selection. Invoke `scripts/dk.mjs` with Node by its absolute installed path. Open a context with a reliable host chat ID, or retain the generated session handle. Explicit preset selection wins over the chat selection and saved default.
 
-Open a context with the reliable host chat ID, or retain the generated session handle. Explicit preset selection wins over the saved chat selection and default. Read the active catalog, honor an explicit profile, otherwise select by its `when` description or an applicable role default. Profile names and model families do not imply competence. If no configured profile fits, work directly or report the missing configuration.
+Read the catalog. Honor an explicitly requested profile; otherwise choose by `when` or a suitable role default. Profile names and model families do not determine competence. If no profile fits, work directly or identify the missing capability. Research and a separate planner are optional.
 
-Choose useful independent outcomes, not a fixed number of workers. Writers need disjoint ownership and compatible shared resources; serialize conflicts and dependencies. A separate planner is optional. Assess unresolved decisions, behavioral risk, meaningful verification and available capabilities. Economy writers require a determined, ordinary-risk task with objective checks and independent review. For selection, limits or recovery details, read [routing.md](references/routing.md).
+Choose useful independent outcomes. Writers need disjoint ownership, coordinated shared resources and integrated dependencies. Economy implementation needs a determined, ordinary-risk task, meaningful behavioral checks and independent review; name the wrong behavior those checks detect in the routing reason. For selection, explicit limits and recovery, read [routing.md](references/routing.md).
 
-## Run the work
+## Execute
 
-For managed implementation, read [tasks.md](references/tasks.md). Open one task contract containing the specification, ownership, selected profiles and checks. Runtime fills mechanical defaults and binds the specification automatically. Prepare each ready work item in its linked Git worktree; runtime acquires and releases writer ownership. Integrate useful results before checking the final task. For standalone read-only research, a short brief suffices without an implementation contract.
+For managed implementation, read [tasks.md](references/tasks.md). Open one contract with the specification, work ownership, profiles and checks; runtime fills mechanical fields. Assign writers linked worktrees. Before editing, establish required shell/browser/DB/cache access. A bug fix needs a reproduction or concrete causal evidence. Missing capabilities or unresolved causes remain explicit blockers. Standalone read-only research needs only a [brief](references/brief-template.md).
 
-For CLI dispatch read [external.md](references/external.md); for native/Paseo read [hosts.md](references/hosts.md). Consult [providers.md](references/providers.md) for a new executor/version or capability error. Preserve the configured harness, provider, model, reasoning and access; surface unsupported combinations. Do not launch paid tests to discover authorization.
+Read [execution](references/external.md) for CLI dispatch and [executor contracts](references/providers.md) for a new executor/version or capability error. Preserve the selected model, provider, reasoning and permissions. Use [legacy migration](references/hosts.md) only for old native/Paseo presets or unfinished runs. Paid model tests need separate authorization.
 
-`prepare` returns run IDs; `run` launches CLI or returns a bridge invocation. Call the actual host tool once and attach its returned ID. Dispatch every member of a required reviewer set independently. An uncertain host dispatch must be reconciled before retrying. Keep saved session/run IDs across compaction.
+`prepare` returns run IDs; `run` launches them. Run every member of a required reviewer set independently. Runtime supplies the task context and role-specific result schema; add only missing context in a brief. Keep run/session IDs across compaction and do independent work while agents run. Use compact `overview`/`watch` and [status reporting](references/observability.md) for meaningful updates.
 
-The runtime supplies the task context and a compact role-specific result schema. Add a [brief](references/brief-template.md) only for context the contract lacks; do not repeat its fields or send the entire parent conversation. Do independent work while workers run.
+Bounded `wait` observes completion without restarting work. A timeout leaves the worker alive. Inspect health and progress before interrupting or replacing a stalled executor. Stop the old writer before transferring ownership; cancellation preserves partial work. A targeted correction can `resume` the exact session; a different profile or independent judgment needs a fresh session.
 
-For team status, use compact `overview` / `watch` and follow [observability.md](references/observability.md). Report actual launches and meaningful changes without repeating an unchanged roster.
+## Verify and finish
 
-## Check, review and finish
+Triage each result against its assignment, mandatory checks and adjacent interfaces. Return concrete omissions before full review. After repeated failures, reassess the cause and record the next decision with `task escalate --agent PROFILE --reason TEXT`; the same profile may continue. Explicit limits remain binding.
 
-Observe completion with host notifications or bounded runtime `wait`. A wait timeout leaves the worker alive. Follow returned health diagnostics; inspect a stalled process/turn before interrupting or replacing it. Stop the prior writer before transferring ownership; cancellation preserves partial changes.
+Integrate useful results, then run `task check`. It collects valid submissions, freezes review material and verifies the integrated code in its prepared environment. Worker claims are not runtime evidence. Unchanged checkpoints may reuse intact evidence; use `--rerun` after an environment change.
 
-After integration, `task check` collects valid completed submissions, creates a frozen snapshot and runs required checks. It reuses evidence only for the same checkpoint; use `--rerun` after an environment change. Worker `checks_run` text is not runner evidence. Classify failed work with `task submit`; two semantic failures per item/profile require explicit escalation by default. Infrastructure failures do not count as semantic failures. A bounded correction can resume the exact saved executor; changing profile or seeking independent judgment needs a fresh session.
+Prepare fresh read-only reviewers with `--checkpoint current`. Substantial final code, including coordinator edits, requires independent review. Follow [review reconciliation](references/review.md): investigate disputed findings with concrete evidence; actual fixes need a new checkpoint and fresh verification/review.
 
-Prepare configured read-only reviewers against `--checkpoint current`. Substantial final code requires independent review; [review.md](references/review.md) covers reconciliation. Refute a false finding with an appropriate check or concrete frozen source evidence. A real fix needs a new snapshot and fresh review. `task accept` is the sole acceptance gate; missing evidence stays unverified unless the user explicitly authorizes a visible exception.
-
-Report changed behavior, actual checks and gaps, selected profiles and transports. Distinguish configured from confirmed model identity and fixtures from live runs. Perform finishing actions within user authorization; keep worktrees and logs until useful work is preserved.
+`task accept` is the sole acceptance gate. Missing evidence stays unverified unless the user explicitly authorizes a visible exception. Report changed behavior, actual checks, gaps and selected executors; distinguish configured model identity from runtime confirmation and fixtures from live runs. Perform finishing actions within authorization and preserve worktrees/logs until useful work is safe.

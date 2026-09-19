@@ -39,17 +39,17 @@ Managed implementation follows one process:
 
 1. **Describe the task:** expected behavior, editable scope, profiles, checks and required review.
 2. **Run scoped workers:** each writer uses an isolated worktree. A short correction can continue the same worker session.
-3. **Integrate and check:** `task check` collects completed results, freezes the integrated code and runs the declared checks.
+3. **Integrate and check:** `task check` collects completed results, freezes review material and runs declared checks in the prepared integration workspace, with a workspace lease and source-version checks.
 4. **Review independently:** fresh read-only reviewers examine the frozen specification and code.
 5. **Accept the task:** `task accept` checks submissions, test evidence and review findings together.
 
 The runtime fills mechanical contract fields and tracks versions. Workers return only the fields relevant to their role. Standalone read-only research needs a brief rather than an implementation contract. See the [task example and commands](skills/delegate-kit/references/tasks.md).
 
-Substantial final code requires independent review. A worker saying “done” is not proof that the task is ready. Unchanged checkpoints can reuse intact check evidence; code changes require fresh checks and review. A false finding can be refuted with a suitable check or concrete frozen source lines. Explicitly authorized exceptions remain visible as exceptions.
+Substantial final code requires independent review. A worker may report “done” only after its assigned mandatory checks pass. These structured worker claims do not replace independent runtime evidence or task acceptance. Unchanged checkpoints can reuse intact check evidence; code changes require fresh checks and review. A false finding can be refuted with a suitable check or concrete frozen source lines. Explicitly authorized exceptions remain visible as exceptions.
 
-Two semantic failures per work item and profile trigger an escalation decision by default; transport failures and internal test iterations do not count. Models and accounts are never silently substituted. Optional economy tiers restrict eligible work, but do not select an executor or balance subscription limits.
+Repeated semantic failures prompt reassessment without a mandatory model switch; only explicit failure limits block further submissions; transport failures and internal test iterations do not count. Models and accounts are never silently substituted. Optional economy tiers restrict eligible work, but do not select an executor or balance subscription limits.
 
-The coordinator reports actual launches, meaningful progress and blockers without repeating an unchanged roster. Waiting never launches another worker, and cancellation preserves partial changes. Worktrees coordinate writers; they are not a security sandbox.
+The coordinator reports actual launches, meaningful progress, available usage and blockers without repeating an unchanged roster. Accounting includes all worker/reviewer attempts, separates shell estimates by payment mode, and marks unavailable costs and coordinator usage explicitly. Waiting never launches another worker, and cancellation preserves partial changes. Worktrees coordinate writers; they are not a security sandbox.
 
 ## Configure your team
 
@@ -73,29 +73,31 @@ Presets and runtime state live outside the installed skill, under `~/.delegate-k
 
 ## The main example
 
-The bundled [main preset](skills/delegate-kit/examples/main.json) contains seven CLI profiles:
+The bundled [main preset](skills/delegate-kit/examples/main.json) contains nine CLI profiles:
 
 | Profile | Configured executor | Assignment |
 |---|---|---|
 | `researcher` | Codex, GPT-5.6 Luna, medium | Bounded code and documentation lookup |
 | `researcher-hard` | Codex, GPT-5.6 Sol, medium | Complex or uncertain investigations |
 | `planner` | Codex, GPT-6 Astra, low | Approach, dependencies, ownership and checks |
+| `implementer-economy` | Codex, GPT-5.6 Luna, medium | Determined, bounded ordinary-risk work with behavioral checks |
 | `implementer` | Codex, GPT-5.6 Sol, medium | Features, fixes, tests and documentation |
+| `implementer-max` | Codex, GPT-6 Astra, medium | Uncertain implementation or invariants with costly failures |
 | `implementer-ui` | OMP/OpenRouter, Qwen 3.8 Max, medium | Interfaces and responsive styling |
 | `reviewer` | Codex, GPT-5.6 Sol, medium | Independent review of ordinary changes |
 | `reviewer-hard` | Codex, GPT-6 Astra, high | Review of changes with costly failure modes |
 
-The researchers and reviewers are alternatives, not mandatory sequences. Setup checks model availability and reasoning support before adopting the example. You may use a smaller, Codex-only, Claude-only or mixed team.
+Profiles are starting choices, not mandatory sequences or fixed model-to-tier bindings. Replace models or add multiple specialists at any tier. Setup checks model availability and reasoning support before adopting the example. You may use a smaller, Codex-only, Claude-only or mixed team.
 
-The UI profile needs OMP and an authorized OpenRouter connection. Its adapter does not expose shell or browser automation; the coordinator performs those checks. See [OMP setup](skills/delegate-kit/references/omp-setup.md).
+The UI profile needs OMP and an authorized OpenRouter connection. The example exposes Bash explicitly. Its OMP command approvals, project browser checks and test environment must be configured before implementation; unavailable checks block submission. Saved presets retain their original permissions. See [OMP setup](skills/delegate-kit/references/omp-setup.md).
 
 ## Supported execution and reference
 
-CLI adapters cover Codex, Claude Code, Gemini, OpenCode, Pi and OMP. Native Codex/Claude and Paseo require compatible host tools. The [compatibility table](skills/delegate-kit/references/compatibility.md) distinguishes automated fixtures from live testing; implementation does not imply validation against every live account.
+CLI adapters cover Codex, Claude Code, Gemini, OpenCode, Pi and OMP. All coordinators use the same CLI/RPC path when they have shell access to the execution machine. Native/Paseo dispatch is retired; saved settings are never silently converted. The [compatibility table](skills/delegate-kit/references/compatibility.md) distinguishes automated fixtures from live testing; implementation does not imply validation against every live account.
 
 - [Task contracts, checks and acceptance](skills/delegate-kit/references/tasks.md)
 - [Selection, limits and recovery](skills/delegate-kit/references/routing.md)
-- [CLI execution](skills/delegate-kit/references/external.md) and [native/Paseo bridges](skills/delegate-kit/references/hosts.md)
+- [CLI execution](skills/delegate-kit/references/external.md) and [legacy host migration](skills/delegate-kit/references/hosts.md)
 - [Team status reporting](skills/delegate-kit/references/observability.md)
 - [Provider restrictions](skills/delegate-kit/references/providers.md) and [independent review](skills/delegate-kit/references/review.md)
 

@@ -65,6 +65,28 @@ test('test report requires executed tests and complete counts', t => {
   assert.equal(verifySnapshot(s.id, check('', { report: {} })).status, 'inconclusive');
 });
 
+test('browser target reports cannot certify a server from a different source tree', t => {
+  const f = fixture(t), s = f.snapshot();
+  const run = tree => verifySnapshot(s.id, check(`
+    const http = require('node:http'), fs = require('node:fs');
+    const server = http.createServer((_, res) => res.end(JSON.stringify({tree:${JSON.stringify(tree)}})));
+    server.listen(0, '127.0.0.1', async () => {
+      try {
+        const identity = 'http://127.0.0.1:' + server.address().port;
+        const actual = await (await fetch(identity)).json();
+        fs.writeFileSync(process.env.DELEGATE_KIT_REPORT_PATH, JSON.stringify({tests:1,passed:1,failed:0,skipped:0,
+          targets:[{name:'app',identity,source_tree:actual.tree}]}));
+      } finally { server.close(); }
+    });`, { report: { min_tests: 1, targets: ['app'] } }));
+  const wrong = run('another-worktree');
+  assert.equal(wrong.status, 'inconclusive');
+  assert.match(wrong.summary, /target identity/);
+  const correct = run(s.tree);
+  assert.equal(correct.status, 'passed');
+  assert.equal(correct.targets[0].source_tree, s.tree);
+  assert.match(correct.targets[0].identity, /^http:\/\/127\.0\.0\.1:/);
+});
+
 test('wrong cwd and changed snapshot cannot produce valid evidence', t => {
   const f = fixture(t), s = f.snapshot();
   assert.throws(() => verifySnapshot(s.id, check('', { cwd: '../..' })), /escapes/);
@@ -84,7 +106,7 @@ test('frozen objects survive source removal and old reports cannot certify anoth
   const f = fixture(t);
   fs.writeFileSync(path.join(f.cwd, '.gitignore'), 'report.json\n');
   const s = f.snapshot();
-  fs.writeFileSync(path.join(s.cwd, 'report.json'), JSON.stringify({ tests: 1, passed: 1, failed: 0, skipped: 0 }));
+  fs.writeFileSync(path.join(f.cwd, 'report.json'), JSON.stringify({ tests: 1, passed: 1, failed: 0, skipped: 0 }));
   const r = verifySnapshot(s.id, check('', { report: { path: 'report.json', min_tests: 1 } }));
   assert.equal(r.status, 'inconclusive'); assert.match(r.summary, /existed before/);
   fs.rmSync(f.cwd, { recursive: true, force: true });
@@ -114,7 +136,7 @@ test('internal symlinks resolve to the frozen content and remain verifiable', t 
   fs.writeFileSync(path.join(f.cwd, 'file'), 'new source content');
   assert.equal(fs.readFileSync(path.join(s.cwd, 'linked'), 'utf8'), 'original');
   assertSnapshot(s);
-  assert.equal(verifySnapshot(s.id, check("if (require('fs').readFileSync('linked', 'utf8') !== 'original') process.exit(1)")).status, 'passed');
+  assert.throws(() => verifySnapshot(s.id, check('')), /Stale checkpoint: source/);
 });
 
 test('verification deadline kills a process even when it ignores SIGTERM', t => {
@@ -137,4 +159,27 @@ test('changing frozen specification invalidates snapshot and new verification', 
   fs.writeFileSync(s.spec_path, 'Different requirements.\n');
   assert.throws(() => assertSnapshot(s), /frozen specification changed/);
   assert.throws(() => verifySnapshot(s.id, check('')), /frozen specification changed/);
+});
+
+
+test('final checks reuse prepared dependencies and preserve immutable review material', t => {
+  const f=fixture(t);
+  fs.writeFileSync(path.join(f.cwd,'.gitignore'),'node_modules/\n');
+  fs.mkdirSync(path.join(f.cwd,'node_modules/fixture'),{recursive:true});
+  fs.writeFileSync(path.join(f.cwd,'node_modules/fixture/ready'),'available');
+  const s=f.snapshot();
+  assert.equal(fs.existsSync(path.join(s.cwd,'node_modules')),false);
+  const r=verifySnapshot(s.id,check("if(require('fs').readFileSync('node_modules/fixture/ready','utf8')!=='available')process.exit(1)"));
+  assert.equal(r.status,'passed'); assert.equal(r.cwd,fs.realpathSync(f.cwd));
+  assertSnapshot(s,{source:true});
+});
+
+test('verification owns the source workspace lease and releases it after failure', t => {
+  const f=fixture(t), s=f.snapshot();
+  const lock=path.join(f.git('rev-parse','--absolute-git-dir'),'delegate-kit.lock');
+  fs.writeFileSync(lock,JSON.stringify({id:'other-writer'}));
+  assert.throws(()=>verifySnapshot(s.id,check('')),/Workspace is owned/);
+  assert.equal(JSON.parse(fs.readFileSync(lock)).id,'other-writer'); fs.unlinkSync(lock);
+  const r=verifySnapshot(s.id,check(`if(!require('fs').existsSync(${JSON.stringify(lock)}))process.exit(3);process.exit(2)`));
+  assert.equal(r.exit_code,2); assert.equal(fs.existsSync(lock),false);
 });

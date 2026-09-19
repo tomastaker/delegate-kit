@@ -6,6 +6,8 @@ Every initial reviewer gets a fresh read-only context, the same frozen specifica
 
 A read-only reviewer profile's `review.also_run` is a required reviewer set over the same already-frozen specification and diff, validated and reserved by `prepare`. Dispatch all returned runs and keep their initial results independent. It does not encode an implementer-to-reviewer dependency: prepare review only after the implementation checkpoint exists. A missing/unavailable mandatory reviewer makes the set incomplete. Optional extra coverage is a coordinator decision within user limits. A review lead can help resolve difficult decomposition; it is never an automatic prelude.
 
+The coordinator first checks whether the submission addresses its assignment, closes mandatory worker checks and fits adjacent parts. Return an obvious omission or wrong direction as a specific correction before full review. Independent reviewers own the detailed implementation analysis; the coordinator investigates disputed or integration-sensitive areas when needed, rather than automatically repeating the whole review.
+
 ## Lenses
 
 Three, deliberately few, and aligned with the two axes of [mattpocock's code-review skill](https://github.com/mattpocock/skills/blob/main/skills/engineering/code-review/SKILL.md) (MIT) plus the one that finds bugs:

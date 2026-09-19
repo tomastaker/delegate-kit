@@ -268,11 +268,25 @@
               "min_tests": {
                 "type": "integer",
                 "minimum": 1
+              },
+              "targets": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "pattern": "\\S"
+                },
+                "description": "Named application targets whose observed identity and source tree must be present in the test report."
               }
             },
             "required": [
               "min_tests"
             ]
+          },
+          "before_edit": {
+            "type": "boolean",
+            "description": "Environment smoke check to run before implementation, using the actual executor permissions. Codex CLI runs it without a model; other routes use worker tools."
           }
         },
         "required": [
@@ -282,6 +296,27 @@
           "cwd",
           "expected_exit",
           "required"
+        ],
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "before_edit"
+              ],
+              "properties": {
+                "before_edit": {
+                  "const": true
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "report"
+                ]
+              }
+            }
+          }
         ]
       },
       "minItems": 0

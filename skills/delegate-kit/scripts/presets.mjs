@@ -71,7 +71,15 @@ export function validatePreset(preset) {
       check(['economy', 'standard', 'hard'].includes(agent.routing.tier), `${at}.routing.tier: expected economy, standard or hard`);
     }
     const e = agent.executor;
-    keys(e, ['harness', 'provider', 'model', 'reasoning', 'transport', 'inherit_model'], `${at}.executor`);
+    keys(e, ['harness', 'provider', 'model', 'reasoning', 'transport', 'inherit_model', 'billing', 'permissions'], `${at}.executor`);
+    check(e.billing === undefined || ['api', 'subscription', 'unknown'].includes(e.billing), `${at}.executor.billing: expected api, subscription or unknown`);
+    if (e.permissions !== undefined) {
+      check(accessOf(agent) === 'workspace-write' && e.transport === 'cli', `${at}.executor.permissions: requires an explicit CLI writer`);
+      check(['codex', 'omp'].includes(e.harness), `${at}.executor.permissions: unsupported harness; retain its configured policy`);
+      keys(e.permissions, e.harness === 'codex' ? ['network', 'writable_roots'] : ['shell'], `${at}.executor.permissions`);
+      for (const key of ['network', 'shell']) if (e.permissions[key] !== undefined) check(typeof e.permissions[key] === 'boolean', `${at}.executor.permissions.${key}: expected boolean`);
+      if (e.permissions.writable_roots !== undefined) check(Array.isArray(e.permissions.writable_roots) && e.permissions.writable_roots.every(p => nonempty(p) && path.isAbsolute(p) && !/[\x00-\x1f]/.test(p)), `${at}.executor.permissions.writable_roots: expected absolute paths`);
+    }
     check(harnesses.includes(e.harness), `${at}.executor.harness: unsupported harness`);
     check(e.transport === undefined || ['auto', 'cli', 'native', 'paseo'].includes(e.transport), `${at}.executor.transport: unsupported transport`);
     check(e.inherit_model === undefined || e.inherit_model === true, `${at}.executor.inherit_model: omit or set true`);

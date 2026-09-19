@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { savePreset, loadPreset, copyPreset, context, setDefault, validatePreset, hash, readJSON } from '../skills/delegate-kit/scripts/presets.mjs';
-import { resolveExecutor, bridgeInvocation } from '../skills/delegate-kit/scripts/executors.mjs';
+import { resolveExecutor } from '../skills/delegate-kit/scripts/executors.mjs';
 import { resultSchema } from '../skills/delegate-kit/scripts/results.mjs';
 import { openTask, readTask } from '../skills/delegate-kit/scripts/tasks.mjs';
 import { FrameDecoder, sumUsage } from '../skills/delegate-kit/scripts/rpc.mjs';
@@ -60,6 +60,7 @@ if(kind==='pi'||kind==='omp') {
  if(process.env.DK_FAKE_RPC_CASE==='nonterminal')send({type:'agent_end',isTerminal:false,messages:[]});
  setTimeout(()=>{send({type:'agent_start'});const last={role:'assistant',model:model.id,provider:model.provider,stopReason:'stop',content:[{type:'text',text:JSON.stringify(result)}]};const messages=[last];
  if(process.env.DK_FAKE_RPC_CASE==='multi-usage'){last.usage={input:200,output:20,totalTokens:220,cost:{total:2}};messages.unshift({role:'assistant',model:model.id,provider:model.provider,stopReason:'toolUse',content:[],usage:{input:100,output:10,totalTokens:110,cost:{total:1}}});for(const message of messages)send({type:'message_end',message});}
+ if(process.env.DK_FAKE_BAD)last.content=[{type:'text',text:'invalid JSON'}];
  send({type:'agent_end',messages})},Number(process.env.DK_FAKE_DELAY||200));}
  }});process.stdin.on('end',()=>{if(process.env.DK_FAKE_RPC_CASE==='eof')process.stdout.write('{');process.exit(0)});
 } else {
@@ -157,11 +158,13 @@ test('R03/R04/S02: incompatible provider, reasoning, harness and native access f
   assert.throws(() => resolveExecutor(agent('gemini', { reasoning: 'high' })), /reasoning/);
   assert.throws(() => resolveExecutor(agent('claude', { provider: 'another' })), /provider/);
   assert.throws(() => resolveExecutor(agent('codex', { reasoning: 'fantasy' })), /reasoning/);
-  assert.throws(() => resolveExecutor(agent('codex', { transport: 'native' }), [cap('native', 'omp')]), /cannot preserve/);
-  assert.throws(() => resolveExecutor(agent('codex', { transport: 'native' }), [{ ...cap(), access: [] }]), /cannot preserve/);
-  const a = agent('codex', { transport: 'native', inherit_model: true }); delete a.executor.model;
-  assert.throws(() => resolveExecutor(a, [cap()]), /cannot preserve/);
-  assert.equal(resolveExecutor(a, [{ ...cap(), current_model: 'test-model' }]).model, 'test-model');
+  for (const transport of ['native', 'paseo']) {
+    const a = agent('codex', { transport });
+    validatePreset(preset('legacy', a));
+    assert.throws(() => resolveExecutor(a, [cap()]), /retired/);
+  }
+  assert.throws(() => resolveExecutor(agent(), [cap()]), /Host dispatch is retired/);
+  assert.equal(resolveExecutor(agent()).transport, 'cli');
 });
 test('R01/L02/L03/S01: actual launch argv and resume preserve immutable preset settings', () => sandbox(async ({ brief, state, root }) => {
   setup(); const p = loadPreset('X1'); p.preset.agents.general.executor.model = 'test-$(touch SHOULD_NOT_EXIST);`echo bad`'; savePreset(p.preset, p.revision);
@@ -219,28 +222,8 @@ test('L10/R06: required review set reserves all slots; parallel admission obeys 
   const calls = await Promise.all(Array.from({ length: 5 }, () => parallel(['prepare', '--session', 'test:chat', '--task', 'race', '--agent', 'general', '--brief', brief])));
   assert.equal(calls.filter(c => c.code === 0).length, 1); assert.equal(calls.filter(c => c.code !== 0).length, 4);
 }));
-test('native bridge: preparation, unique sessions, attach idempotence, correlated completion and same-agent follow-up', () => sandbox(async ({ brief }) => {
-  const p = preset('X1', agent('codex', { transport: 'native' })); savePreset(p); setDefault('X1'); context({ session: 'test:chat' });
-  const r = prep(brief, { capabilities: [cap()] }); assert.equal(r.status, 'prepared');
-  const call = launch(r.id); assert.equal(call.status, 'starting'); assert.equal(call.invoke.arguments.model, 'test-model'); assert.equal(call.invoke.arguments.fork_turns, 'none');
-  attach(r.id, 'host-agent'); attach(r.id, 'host-agent'); assert.throws(() => attach(r.id, 'another-agent'), /Already attached/);
-  assert.throws(() => ingest(r.id, { hostAgent: 'wrong', event: 'complete', result: done, stopped: true }), /correlated/);
-  ingest(r.id, { hostAgent: 'host-agent', event: 'complete', result: done, stopped: true });
-  const next = resume(r.id, brief); assert.equal(launch(next.id).invoke.arguments.target, 'host-agent');
-  attach(next.id, 'host-agent'); ingest(next.id, { hostAgent: 'host-agent', event: 'complete', result: done, stopped: true });
-  assert.equal(status(next.id).result_validated, true);
-}));
-test('PA01–PA04: Paseo materializes own settings, preserves daemon/workspace and rejects unsupported harness', () => sandbox(async ({ brief }) => {
-  savePreset(preset('X1', agent('codex', { transport: 'paseo', reasoning: 'high' }))); setDefault('X1'); context({ session: 'test:chat' });
-  const r = prep(brief, { capabilities: [cap('paseo')], workspace: { owner: 'paseo', id: 'ws', daemon: 'fixture-daemon', remote: true }, cwd: '/remote/not-local' });
-  const call = launch(r.id); assert.equal(call.invoke.arguments.provider, 'codex/test-model'); assert.equal(call.invoke.arguments.settings.thinkingOptionId, 'high');
-  assert.equal(call.invoke.daemon, 'fixture-daemon'); assert.ok(!('profile' in call.invoke.arguments));
-  assert.throws(() => attach(r.id, 'a1', 'wrong'), /different workspace/); attach(r.id, 'a1', 'ws');
-  ingest(r.id, { hostAgent: 'a1', event: 'complete', result: done, stopped: true });
-  const next = resume(r.id, brief); const follow = launch(next.id); assert.equal(follow.invoke.tool, 'send_agent_prompt'); assert.equal(follow.invoke.arguments.agentId, 'a1');
-  attach(next.id, 'a1', 'ws'); ingest(next.id, { hostAgent: 'a1', event: 'complete', result: done, stopped: true });
-  assert.throws(() => resolveExecutor(agent('omp', { transport: 'paseo' }), [cap('paseo')]), /cannot preserve/);
-}));
+
+
 test('L05: writer cancellation preserves partial edits and releases only after process termination', () => sandbox(async ({ root, brief }) => {
   const repo = path.join(root, 'repo'), wt = path.join(root, 'wt'); fs.mkdirSync(repo);
   const git = a => { const r = spawnSync('git', a, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
@@ -306,19 +289,6 @@ test('Claude and Gemini retained adapters work through the v2 snapshot runner', 
   }
 }));
 
-test('P03: simultaneous X1/Y2 native definitions never repin a shared role', () => sandbox(async ({ brief, root }) => {
-  const p = preset('X1', agent('claude', { transport: 'native' })); savePreset(p); copyPreset('X1', 'Y2');
-  const y = loadPreset('Y2'); y.preset.agents.general.executor.model = 'other-model'; savePreset(y.preset, y.revision);
-  setDefault('X1'); context({ session: 'host:X1' }); context({ session: 'host:Y2', preset: 'Y2' });
-  const capabilities = [{ ...cap('native', 'claude'), host: 'claude', dynamic_roles: true, models: [{ id: 'test-model' }, { id: 'other-model' }] }];
-  const ids = ['X1', 'Y2'].map(team => prepare({ session: `host:${team}`, task: 'task', agent: 'general', brief, capabilities }).runs[0].id);
-  const calls = ids.map(launch); assert.notEqual(calls[0].invoke.definition.name, calls[1].invoke.definition.name);
-  const directory = path.join(root, 'native agents'); fs.mkdirSync(directory); fs.writeFileSync(path.join(directory, 'user-role.md'), 'user definition');
-  for (const id of ids) { const r = invoke(['materialize', id, '--directory', directory]); assert.equal(r.status, 0, r.stderr); }
-  assert.equal(fs.readFileSync(path.join(directory, `${calls[0].invoke.definition.name}.md`), 'utf8').includes('test-model'), true);
-  assert.equal(fs.readFileSync(path.join(directory, `${calls[1].invoke.definition.name}.md`), 'utf8').includes('other-model'), true);
-  assert.equal(fs.readFileSync(path.join(directory, 'user-role.md'), 'utf8'), 'user definition');
-}));
 
 test('U03: shipped v2 example requires replacing placeholders; relocated skill references resolve', t => {
   const source = path.dirname(path.dirname(dk)), relocated = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-package-'));
@@ -336,39 +306,7 @@ test('U03: shipped v2 example requires replacing placeholders; relocated skill r
 });
 
 
-test('Native failed dispatch releases its reservation only with confirmed host evidence', () => sandbox(async ({ brief }) => {
-  const p = preset('X1', agent('codex', { transport: 'native' })); p.limits = { max_workers: 1 };
-  savePreset(p); setDefault('X1'); context({ session: 'test:chat' });
-  const r = prep(brief, { capabilities: [cap()] }); const call = launch(r.id);
-  await cancel(r.id);
-  assert.throws(() => dispatchFailed(r.id, { dispatchToken: call.dispatch_token, evidence: 'timed out' }), /confirming/);
-  assert.throws(() => prep(brief, { capabilities: [cap()] }), /max 1/);
-  assert.equal(dispatchFailed(r.id, { dispatchToken: call.dispatch_token, confirmedNotStarted: true, evidence: 'Host rejected request before creating an agent' }).status, 'cancelled');
-  const next = prep(brief, { capabilities: [cap()] }); launch(next.id); await cancel(next.id);
-  attach(next.id, 'late-host-id'); assert.equal(status(next.id).status, 'cancelling');
-  ingest(next.id, { hostAgent: 'late-host-id', event: 'running' }); assert.equal(status(next.id).status, 'cancelling');
-  ingest(next.id, { hostAgent: 'late-host-id', event: 'permission' }); assert.equal(status(next.id).status, 'cancelling');
-  assert.throws(() => dispatchFailed(next.id, { dispatchToken: getRun(next.id).claim, confirmedNotStarted: true, evidence: 'no' }), /unattached/);
-  assert.equal(ingest(next.id, { hostAgent: 'late-host-id', event: 'cancelled', stopped: true }).status, 'cancelled');
-}));
 
-test('Native continuation rejects a previous turn result even if caller labels it with the new token', () => sandbox(async ({ brief }) => {
-  savePreset(preset('X1', agent('codex', { transport: 'native' }))); setDefault('X1'); context({ session: 'test:chat' });
-  const r = prep(brief, { capabilities: [cap()] }); const first = launch(r.id); attach(r.id, 'host');
-  const old = { dispatch_token: first.dispatch_token, result: done };
-  ingest(r.id, { hostAgent: 'host', event: 'complete', result: done, stopped: true });
-  const next = resume(r.id, brief); const second = launch(next.id); attach(next.id, 'host');
-  assert.notEqual(first.dispatch_token, second.dispatch_token);
-  assert.ok(second.invoke.arguments.message.includes(second.dispatch_token));
-  assert.throws(() => ingestRaw(next.id, { hostAgent: 'host', dispatchToken: first.dispatch_token, event: 'complete', result: old, stopped: true }), /token/);
-  assert.throws(() => ingestRaw(next.id, { hostAgent: 'host', dispatchToken: second.dispatch_token, event: 'complete', result: old, stopped: true }), /token/);
-  assert.equal(status(next.id).status, 'running');
-  ingest(next.id, { hostAgent: 'host', event: 'complete', result: done, stopped: true }); assert.equal(status(next.id).result_validated, true);
-  const rejected = resume(next.id, brief), call = launch(rejected.id);
-  assert.equal(dispatchFailed(rejected.id, { dispatchToken: call.dispatch_token, confirmedNotStarted: true, evidence: 'Host rejected follow-up before starting a new turn in existing session' }).status, 'failed');
-  assert.equal(getRun(rejected.id).transport_session_id, 'host');
-  const retry = resume(rejected.id, brief); assert.equal(retry.transport_session_id, 'host'); await cancel(retry.id);
-}));
 
 test('No implicit worker cap; coordinator can admit independent workers', () => sandbox(async ({ brief }) => {
   setup(); const runs = Array.from({ length: 3 }, () => prep(brief));
@@ -384,19 +322,6 @@ test('Watchdog reports an alive but quiet CLI without killing it or losing owner
   await cancel(r.id);
 }));
 
-test('Watchdog requests native status and preserves progress age across unchanged probes', () => sandbox(async ({ brief, state }) => {
-  savePreset(preset('X1', agent('codex', { transport: 'native' }))); setDefault('X1'); context({ session: 'test:chat' });
-  const r = prep(brief, { capabilities: [cap()] }); launch(r.id); attach(r.id, 'host');
-  const file = path.join(state, 'runs', r.id, 'meta.json'), m = getRun(r.id);
-  m.host_checked_at = new Date(Date.now() - 61000).toISOString(); fs.writeFileSync(file, JSON.stringify(m));
-  assert.equal((await wait(r.id, 1000)).health.state, 'check_host');
-  ingest(r.id, { hostAgent: 'host', event: 'running', progress: 'cursor1' });
-  const stale = getRun(r.id); stale.progress_at = new Date(Date.now() - 301000).toISOString(); fs.writeFileSync(file, JSON.stringify(stale));
-  ingest(r.id, { hostAgent: 'host', event: 'running', progress: 'cursor1' });
-  assert.equal((await wait(r.id, 1000)).health.state, 'no_progress');
-  ingest(r.id, { hostAgent: 'host', event: 'running', progress: 'cursor2' });
-  assert.equal(status(r.id).health.attention_required, false);
-}));
 
 test('Watchdog detects frozen supervisor heartbeats while the process remains alive', () => sandbox(async ({ brief, state }) => {
   setup(); process.env.DK_FAKE_DELAY = '10000'; const r = prep(brief); launch(r.id); await wait(r.id, 300);
@@ -449,31 +374,56 @@ test('Installed CLI runs through a skill-directory symlink', t => {
 });
 
 
-test('Native writers require an enforced binding to the leased worktree before admission', () => sandbox(async ({ root, brief, state }) => {
-  const repo = path.join(root, 'repo'), wt = path.join(root, 'writer'), alias = path.join(root, 'writer-link');
-  fs.mkdirSync(repo);
-  const git = args => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
-  git(['init', '-q']); git(['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-qm', 'Fixture']);
-  git(['worktree', 'add', '-qb', 'writer', wt]); fs.symlinkSync(wt, alias);
-  const lock = path.join(spawnSync('git', ['rev-parse', '--absolute-git-dir'], { cwd: wt, encoding: 'utf8' }).stdout.trim(), 'delegate-kit.lock');
-  for (const harness of ['codex', 'claude']) {
-    savePreset(preset(harness, { ...agent(harness, { transport: 'native' }), role: 'implementer' }));
-    context({ session: 'test:chat', preset: harness });
-    const host = { ...cap('native', harness), host: harness, dynamic_roles: true };
-    for (const binding of [undefined, { cwd: repo, enforced: true }, { cwd: wt, enforced: false }, { cwd: 'writer', enforced: true }]) {
-      assert.throws(() => prep(brief, { cwd: wt, capabilities: [{ ...host, workspace_binding: binding }] }), /Native writer requires.*worktree/);
-      assert.equal(fs.existsSync(lock), false);
-      assert.equal(fs.existsSync(path.join(state, 'runs')) && fs.readdirSync(path.join(state, 'runs')).length > 0, false);
-    }
+
+test('RPC cost survives invalid worker JSON and is classified as an estimate', () => sandbox(async ({ brief }) => {
+  for (const harness of ['pi', 'omp']) {
+    savePreset(preset(harness, agent(harness))); context({ session: 'test:chat', preset: harness });
+    process.env.DK_FAKE_RPC_CASE = 'multi-usage'; process.env.DK_FAKE_BAD = '1';
+    const run = prep(brief); launch(run.id);
+    const result = await wait(run.id, 5000);
+    assert.equal(result.status, 'failed');
+    assert.match(result.error, /not JSON/);
+    assert.equal(result.usage.totalTokens, 330);
+    assert.equal(result.cost.kind, 'estimated');
+    assert.equal(result.cost.amount_usd, 3);
+    assert.equal(result.cost.billing, 'unknown');
   }
-  const host = { ...cap(), workspace_binding: { cwd: alias, enforced: true } };
-  context({ session: 'test:chat', preset: 'codex' });
-  const r = prep(brief, { cwd: wt, capabilities: [host] });
-  assert.equal(fs.existsSync(lock), true);
-  assert.equal(bridgeInvocation(getRun(r.id), 'task').tool, 'spawn_agent');
-  const unbound = getRun(r.id); delete unbound.executor.capability.workspace_binding;
-  assert.throws(() => bridgeInvocation(unbound, 'task'), /Native writer requires/);
-  unbound.resume_of = 'previous'; unbound.transport_session_id = 'host-agent';
-  assert.throws(() => bridgeInvocation(unbound, 'continue'), /Native writer requires/);
-  await cancel(r.id);
+}));
+
+
+test('retired host presets remain unchanged and cannot silently launch a CLI', () => sandbox(async ({ brief, root }) => {
+  for (const transport of ['native', 'paseo']) {
+    savePreset(preset(transport, agent('codex', { transport })));
+    context({ session:'test:chat', preset:transport });
+    const before=loadPreset(transport);
+    assert.throws(() => prep(brief), /retired/);
+    assert.deepEqual(loadPreset(transport), before);
+    assert.equal(fs.existsSync(path.join(root,'calls.jsonl')), false);
+  }
+}));
+
+test('legacy host runs can finish or cancel, but cannot launch or resume after upgrade', () => sandbox(async ({ brief, state }) => {
+  setup();
+  // Persist the shape of runs created before the CLI-only transition.
+  const legacy = (status='starting') => {
+    const r=prep(brief), m=getRun(r.id);
+    Object.assign(m,{status,claim:'legacy-'+r.id,started:new Date().toISOString()});
+    m.executor.transport='native';
+    fs.writeFileSync(path.join(state,'runs',r.id,'meta.json'),JSON.stringify(m));
+    return r;
+  };
+  const pending=legacy('prepared'); assert.throws(()=>launch(pending.id),/retired/); await cancel(pending.id);
+  const running=legacy(); attach(running.id,'old-host');
+  assert.throws(()=>ingestRaw(running.id,{hostAgent:'old-host',dispatchToken:'old-token',event:'complete',stopped:true,result:done}),/token/);
+  ingest(running.id,{hostAgent:'old-host',event:'complete',stopped:true,result:done});
+  assert.equal(status(running.id).status,'finished');
+  assert.throws(()=>resume(running.id,brief),/retired/);
+  const unknown=legacy(); await cancel(unknown.id);
+  assert.throws(()=>dispatchFailed(unknown.id,{dispatchToken:getRun(unknown.id).claim,evidence:'timeout'}),/confirming/);
+  dispatchFailed(unknown.id,{dispatchToken:getRun(unknown.id).claim,confirmedNotStarted:true,evidence:'Host confirms no process was created'});
+  assert.equal(status(unknown.id).status,'cancelled');
+  const late=legacy(); await cancel(late.id); attach(late.id,'late-host');
+  assert.equal(status(late.id).status,'cancelling');
+  ingest(late.id,{hostAgent:'late-host',event:'cancelled',stopped:true});
+  assert.equal(status(late.id).status,'cancelled');
 }));

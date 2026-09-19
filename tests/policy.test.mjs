@@ -7,6 +7,17 @@ const agentSchema = JSON.parse(fs.readFileSync(new URL('../skills/delegate-kit/a
 const profile = role => ({ role, when: 'Explicit bounded fixture', executor: { harness: 'codex', model: 'fixture', transport: 'cli' } });
 const preset = () => ({ schema_version: 2, id: 'test', agents: { author: profile('implementer'), reviewer: profile('reviewer'), second: profile('reviewer') } });
 
+test('main offers three replaceable implementation levels and preserves the existing team', () => {
+  const main = validatePreset(JSON.parse(fs.readFileSync(new URL('../skills/delegate-kit/examples/main.json', import.meta.url))));
+  assert.equal(main.defaults.implementer, 'implementer');
+  for (const [id, model, tier] of [['implementer-economy', 'gpt-5.6-luna', 'economy'], ['implementer', 'gpt-5.6-sol', 'standard'], ['implementer-max', 'gpt-6-astra', 'hard']]) {
+    assert.equal(main.agents[id].executor.model, model); assert.equal(main.agents[id].routing.tier, tier);
+  }
+  for (const id of ['researcher', 'researcher-hard', 'planner', 'implementer-ui', 'reviewer', 'reviewer-hard']) assert.ok(main.agents[id]);
+  main.agents['another-economy'] = { ...main.agents['implementer-economy'], executor: { harness: 'claude', transport: 'cli', model: 'user-choice' } };
+  validatePreset(main);
+});
+
 test('optional routing tiers preserve profiles without tiers, arbitrary names and exact settings', () => {
   const p = preset();
   assert.equal(catalog(validatePreset(p)).agents[0].routing, null);
