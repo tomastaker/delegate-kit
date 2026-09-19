@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { home, check, identifier, hash, readJSON, atomicJSON, context, reviewSet, accessOf } from './presets.mjs';
 import { resolveLimits } from './limits.mjs';
 import { budget } from './budget.mjs';
-import { admission, repositoryAdmission, alive } from './locks.mjs';
+import { admission, repositoryAdmission, alive, groupAlive } from './locks.mjs';
 import { resolveExecutor } from './executors.mjs';
 import { buildCommand, codexSandboxConfig, extractResult, validate } from './adapters.mjs';
 import { inspectPermissions, mergeInline } from './opencode-permissions.mjs';
@@ -43,12 +43,7 @@ export function fingerprint(pid) {
   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
 }
 function sameProcess(pid, stamp) { return Boolean(stamp && fingerprint(pid) === stamp); }
-function groupAlive(pid) {
-  if (!pid) return false;
-  const r = spawnSync('ps', ['-eo', 'pid=,pgid=,stat='], { encoding: 'utf8' });
-  check(r.status === 0, 'Cannot verify process group termination; ownership retained');
-  return r.stdout.split('\n').some(line => { const [, group, state] = line.trim().split(/\s+/); return Number(group) === pid && state && !state.startsWith('Z'); });
-}
+
 function signal(m, value) {
   if (sameProcess(m.child_pid, m.child_fingerprint)) {
     try { process.kill(-m.child_pid, value); } catch (e) { if (e.code !== 'ESRCH') throw e; }

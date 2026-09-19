@@ -183,3 +183,23 @@ test('verification owns the source workspace lease and releases it after failure
   const r=verifySnapshot(s.id,check(`if(!require('fs').existsSync(${JSON.stringify(lock)}))process.exit(3);process.exit(2)`));
   assert.equal(r.exit_code,2); assert.equal(fs.existsSync(lock),false);
 });
+
+for (const timedOut of [false, true]) test(`verification stops owned descendants before releasing its lease (${timedOut ? 'timeout' : 'leader exit'})`, t => {
+  const f = fixture(t), s = f.snapshot();
+  const marker = path.join(path.dirname(f.cwd), 'child.pid');
+  const childCode = `require('fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => require('fs').writeFileSync('file', 'late mutation'), 4000)`;
+  const code = `
+    require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(childCode)}], { stdio: 'ignore' }).unref();
+    while (!require('fs').existsSync(${JSON.stringify(marker)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    ${timedOut ? 'setInterval(() => {}, 100)' : ''}
+  `;
+  const r = verifySnapshot(s.id, check(code, { timeout_ms: 1500 }));
+  assert.equal(r.status, 'inconclusive');
+  const pid = Number(fs.readFileSync(marker, 'utf8'));
+  t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch {} });
+  let state = '';
+  try { state = execFileSync('ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' }).trim(); } catch {}
+  assert.ok(!state || state.startsWith('Z'), `Check descendant is still running: ${pid} ${state}`);
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'file'), 'utf8'), 'original');
+  assert.equal(fs.existsSync(path.join(f.git('rev-parse', '--absolute-git-dir'), 'delegate-kit.lock')), false);
+});

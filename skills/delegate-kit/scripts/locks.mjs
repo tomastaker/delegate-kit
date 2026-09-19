@@ -8,6 +8,12 @@ const git = (cwd, args) => spawnSync('git', args, { cwd, encoding: 'utf8' });
 const lockTimeout = () => process.env.NODE_ENV === 'test' && Number.isSafeInteger(Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS)) && Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS) > 0
   ? Number(process.env.DELEGATE_KIT_TEST_LOCK_TIMEOUT_MS) : 15000;
 export function alive(pid) { if (!Number.isSafeInteger(pid) || pid < 1) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+export function groupAlive(pid) {
+  if (!pid) return false;
+  const r = spawnSync('ps', ['-eo', 'pid=,pgid=,stat='], { encoding: 'utf8' });
+  check(r.status === 0, 'Cannot verify process group termination; ownership retained');
+  return r.stdout.split('\n').some(line => { const [, group, state] = line.trim().split(/\s+/); return Number(group) === pid && state && !state.startsWith('Z'); });
+}
 // Fully publish the PID
 // before taking the lock so another process never sees an empty owner.
 export function admission(fn) {
@@ -85,10 +91,16 @@ export function withVerificationLease(cwd, fn) {
   const r = git(cwd, ['rev-parse', '--absolute-git-dir']);
   check(r.status === 0, 'Cannot resolve verification workspace');
   const file = path.join(r.stdout.trim(), 'delegate-kit.lock');
+  const lease = { id, kind: 'verification', cwd, pid: process.pid };
   repositoryAdmission(cwd, () => {
     check(!readJSON(file, null), 'Workspace is owned; stop its writer or check before verification');
-    atomicJSON(file, { id, kind: 'verification', cwd, pid: process.pid });
+    atomicJSON(file, lease);
   });
-  try { return fn(); }
-  finally { repositoryAdmission(cwd, () => { if (readJSON(file, null)?.id === id) fs.rmSync(file); }); }
+  try { return fn(lease); }
+  finally { repositoryAdmission(cwd, () => {
+    if (readJSON(file, null)?.id !== id) return;
+    atomicJSON(file, lease);
+    check(!groupAlive(lease.child_pid), 'Check process group still active; verification ownership retained for manual recovery');
+    fs.rmSync(file);
+  }); }
 }

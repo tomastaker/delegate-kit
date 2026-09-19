@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { home, identifier, atomicJSON, readJSON, hash } from './presets.mjs';
-import { withVerificationLease } from './locks.mjs';
+import { withVerificationLease, groupAlive } from './locks.mjs';
 
 const now = () => new Date().toISOString();
 const directory = id => path.join(home(), 'checkpoints', identifier(id, 'checkpoint'));
@@ -90,9 +90,9 @@ const evidenceDirectory = id => path.join(home(), 'evidence', identifier(id, 'ev
 export const getEvidence = id => readJSON(path.join(evidenceDirectory(id), 'receipt.json'));
 export function verifySnapshot(id, contract) {
   const snapshot = getSnapshot(id);
-  return withVerificationLease(snapshot.source_cwd, () => verifyWorkspace(snapshot, contract));
+  return withVerificationLease(snapshot.source_cwd, lease => verifyWorkspace(snapshot, contract, lease));
 }
-function verifyWorkspace(snapshot, contract) {
+function verifyWorkspace(snapshot, contract, lease) {
   const id = snapshot.id;
   if (!contract?.id || !Array.isArray(contract.argv) || !contract.argv.length || contract.argv.some(x => typeof x !== 'string') || !Array.isArray(contract.requirements) || !contract.requirements.length || !Number.isInteger(contract.expected_exit)) throw new Error('Invalid check contract');
   if (path.isAbsolute(contract.cwd || '.') || (contract.timeout_ms != null && (!Number.isInteger(contract.timeout_ms) || contract.timeout_ms <= 0))) throw new Error('Invalid check cwd/timeout');
@@ -112,7 +112,15 @@ function verifyWorkspace(snapshot, contract) {
   try {
     result = spawnSync(contract.argv[0], contract.argv.slice(1), { cwd, env: { ...process.env, DELEGATE_KIT_REPORT_PATH: externalReport,
       DELEGATE_KIT_CHECKPOINT: snapshot.id, DELEGATE_KIT_SOURCE_TREE: snapshot.tree, DELEGATE_KIT_WORKSPACE: workspace },
-      timeout: contract.timeout_ms ?? 120000, killSignal: 'SIGKILL', stdio: ['ignore', out, err] });
+      detached: true, timeout: contract.timeout_ms ?? 120000, killSignal: 'SIGKILL', stdio: ['ignore', out, err] });
+    lease.child_pid = result.pid;
+    // Own only this command's process group, never a shared project server.
+    if (groupAlive(result.pid)) {
+      result.error ||= new Error('Check left child processes running; stopped its process group');
+      try { process.kill(-result.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+      const deadline = Date.now() + 5000;
+      while (groupAlive(result.pid) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
   } finally { fs.closeSync(out); fs.closeSync(err); }
   Object.assign(receipt, { ended_at: now(), exit_code: result.status, signal: result.signal, status: result.error || result.signal ? 'inconclusive' : result.status === contract.expected_exit ? 'passed' : 'failed', summary: result.error?.message || `Exited ${result.status}` });
   if (contract.report) {
