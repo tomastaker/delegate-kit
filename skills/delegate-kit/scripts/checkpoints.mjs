@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { home, identifier, atomicJSON, readJSON, hash } from './presets.mjs';
 import { withVerificationLease, groupAlive } from './locks.mjs';
@@ -90,9 +91,9 @@ const evidenceDirectory = id => path.join(home(), 'evidence', identifier(id, 'ev
 export const getEvidence = id => readJSON(path.join(evidenceDirectory(id), 'receipt.json'));
 export function verifySnapshot(id, contract) {
   const snapshot = getSnapshot(id);
-  return withVerificationLease(snapshot.source_cwd, lease => verifyWorkspace(snapshot, contract, lease));
+  return withVerificationLease(snapshot.source_cwd, (lease, leaseFile) => verifyWorkspace(snapshot, contract, lease, leaseFile));
 }
-function verifyWorkspace(snapshot, contract, lease) {
+function verifyWorkspace(snapshot, contract, lease, leaseFile) {
   const id = snapshot.id;
   if (!contract?.id || !Array.isArray(contract.argv) || !contract.argv.length || contract.argv.some(x => typeof x !== 'string') || !Array.isArray(contract.requirements) || !contract.requirements.length || !Number.isInteger(contract.expected_exit)) throw new Error('Invalid check contract');
   if (path.isAbsolute(contract.cwd || '.') || (contract.timeout_ms != null && (!Number.isInteger(contract.timeout_ms) || contract.timeout_ms <= 0))) throw new Error('Invalid check cwd/timeout');
@@ -109,11 +110,17 @@ function verifyWorkspace(snapshot, contract, lease) {
   const receipt = { version: 1, id: evidenceId, checkpoint_id: id, spec_digest: snapshot.spec_digest, contract_revision: snapshot.contract_revision, check_id: contract.id, requirements: contract.requirements, source: 'runtime', argv: contract.argv, cwd, started_at: now(), environment: { platform: process.platform, arch: process.arch, node: process.version }, stdout_path: stdoutPath, stderr_path: stderrPath };
   const out = fs.openSync(stdoutPath, 'w', 0o600), err = fs.openSync(stderrPath, 'w', 0o600);
   let result;
+  const processResult = path.join(dir, 'process.json');
   try {
-    result = spawnSync(contract.argv[0], contract.argv.slice(1), { cwd, env: { ...process.env, DELEGATE_KIT_REPORT_PATH: externalReport,
+    result = spawnSync(process.execPath, [fileURLToPath(new URL('./check-process.mjs', import.meta.url)), leaseFile, lease.id, processResult, ...contract.argv], { cwd, env: { ...process.env, DELEGATE_KIT_REPORT_PATH: externalReport,
       DELEGATE_KIT_CHECKPOINT: snapshot.id, DELEGATE_KIT_SOURCE_TREE: snapshot.tree, DELEGATE_KIT_WORKSPACE: workspace },
       detached: true, timeout: contract.timeout_ms ?? 120000, killSignal: 'SIGKILL', stdio: ['ignore', out, err] });
     lease.child_pid = result.pid;
+    if (!result.error && !result.signal) {
+      const outcome = readJSON(processResult, null);
+      if (result.status !== 0 || !outcome) result.error = new Error('Check process registration or execution failed; see stderr');
+      else Object.assign(result, { status: outcome.status, signal: outcome.signal, error: outcome.error ? new Error(outcome.error) : null });
+    }
     // Own only this command's process group, never a shared project server.
     if (groupAlive(result.pid)) {
       result.error ||= new Error('Check left child processes running; stopped its process group');

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createSnapshot, assertSnapshot, getSnapshot, verifySnapshot, getEvidence } from '../skills/delegate-kit/scripts/checkpoints.mjs';
 
@@ -52,6 +52,7 @@ test('runtime persists full logs, success and failure tied to snapshot/spec', t 
   assert.match(fs.readFileSync(r.stderr_path, 'utf8'), /diagnostic/);
   assert.deepEqual(getEvidence(r.id), r);
   assert.equal(verifySnapshot(s.id, check('process.exit(2)')).status, 'failed');
+  assert.equal(verifySnapshot(s.id, check('process.exit(2)', { expected_exit: 2 })).status, 'passed');
   assert.equal(verifySnapshot(s.id, check('', { argv: ['nonexistent-dk-command'] })).status, 'inconclusive');
 });
 
@@ -202,4 +203,41 @@ for (const timedOut of [false, true]) test(`verification stops owned descendants
   assert.ok(!state || state.startsWith('Z'), `Check descendant is still running: ${pid} ${state}`);
   assert.equal(fs.readFileSync(path.join(f.cwd, 'file'), 'utf8'), 'original');
   assert.equal(fs.existsSync(path.join(f.git('rev-parse', '--absolute-git-dir'), 'delegate-kit.lock')), false);
+});
+
+
+test('interrupted verification retains a published process group for recovery', async t => {
+  const f = fixture(t), s = f.snapshot();
+  const marker = path.join(path.dirname(f.cwd), 'running.pid');
+  const contract = check(`require('fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setInterval(() => {}, 100)`, { timeout_ms: 30000 });
+  const module = new URL('../skills/delegate-kit/scripts/checkpoints.mjs', import.meta.url).href;
+  const verifier = spawn(process.execPath, ['--input-type=module', '-e', `import { verifySnapshot } from ${JSON.stringify(module)}; verifySnapshot(${JSON.stringify(s.id)}, ${JSON.stringify(contract)});`], { stdio: 'ignore' });
+  const stopped = new Promise(resolve => verifier.on('close', resolve));
+  let group;
+  t.after(async () => {
+    verifier.kill('SIGKILL');
+    if (group) { try { process.kill(-group, 'SIGKILL'); } catch {} }
+    await stopped;
+  });
+  const deadline = Date.now() + 10000;
+  while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+  assert.ok(fs.existsSync(marker), 'Check must start before interrupting its verifier');
+  const child = Number(fs.readFileSync(marker, 'utf8'));
+  group = Number(execFileSync('ps', ['-p', String(child), '-o', 'pgid='], { encoding: 'utf8' }).trim());
+  verifier.kill('SIGKILL'); await stopped;
+  const lease = JSON.parse(fs.readFileSync(path.join(f.git('rev-parse', '--absolute-git-dir'), 'delegate-kit.lock'), 'utf8'));
+  assert.equal(lease.child_pid, group, 'Recovery must identify the live group even when the verifier never returns');
+  assert.ok(lease.child_fingerprint, 'Recovery must retain the group leader birth identity');
+});
+
+
+test('check launcher refuses project code when ownership registration fails', t => {
+  const f = fixture(t);
+  const lock = path.join(f.git('rev-parse', '--absolute-git-dir'), 'delegate-kit.lock');
+  fs.writeFileSync(lock, JSON.stringify({ id: 'current-owner' }));
+  const marker = path.join(path.dirname(f.cwd), 'must-not-run');
+  const helper = new URL('../skills/delegate-kit/scripts/check-process.mjs', import.meta.url);
+  assert.throws(() => execFileSync(process.execPath, [helper.pathname, lock, 'stale-owner', marker + '.result', process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`], { cwd: f.cwd, stdio: 'pipe' }), /ownership changed/);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).id, 'current-owner');
 });

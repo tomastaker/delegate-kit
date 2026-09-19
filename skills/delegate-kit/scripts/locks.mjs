@@ -96,10 +96,10 @@ export function withVerificationLease(cwd, fn) {
     check(!readJSON(file, null), 'Workspace is owned; stop its writer or check before verification');
     atomicJSON(file, lease);
   });
-  try { return fn(lease); }
+  try { return fn(lease, file); }
   finally { repositoryAdmission(cwd, () => {
     if (readJSON(file, null)?.id !== id) return;
-    atomicJSON(file, lease);
+    atomicJSON(file, { ...readJSON(file), ...lease });
     check(!groupAlive(lease.child_pid), 'Check process group still active; verification ownership retained for manual recovery');
     fs.rmSync(file);
   }); }
