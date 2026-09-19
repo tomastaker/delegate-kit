@@ -3,12 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { narrowPermissions } from './opencode-permissions.mjs';
 const present = value => value !== null && value !== undefined;
-export function buildCommand({ adapter, model, effort, provider, prompt, write, resumeId, skillDir, schemaFile, agentName = 'delegate-kit', permissionRules }) {
+export function codexSandboxConfig(write, permissions = {}) {
+  const args = ['-c', `sandbox_mode="${write ? 'workspace-write' : 'read-only'}"`];
+  if (write && permissions.network !== undefined) args.push('-c', `sandbox_workspace_write.network_access=${permissions.network}`);
+  if (write && permissions.writable_roots !== undefined) args.push('-c', `sandbox_workspace_write.writable_roots=${JSON.stringify(permissions.writable_roots)}`);
+  return args;
+}
+export function buildCommand({ adapter, model, effort, provider, prompt, write, resumeId, skillDir, schemaFile, agentName = 'delegate-kit', permissionRules, permissions }) {
   const schema = schemaFile;
   if (['codex', 'claude'].includes(adapter) && !schema) throw new Error('A per-run result schema is required');
   if (adapter === 'codex') {
     const args = ['exec', ...(resumeId ? ['resume'] : []), '--json', '--skip-git-repo-check', '-c', 'agents.enabled=false'];
-    args.push('-c', `sandbox_mode="${write ? 'workspace-write' : 'read-only'}"`);
+    args.push(...codexSandboxConfig(write, permissions));
     if (present(model)) args.push('-m', model);
     if (present(provider)) args.push('-c', `model_provider=${JSON.stringify(provider)}`);
     if (present(effort)) args.push('-c', `model_reasoning_effort=${JSON.stringify(effort)}`);

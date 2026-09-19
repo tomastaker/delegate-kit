@@ -89,10 +89,39 @@
                   "native",
                   "cli",
                   "paseo"
-                ]
+                ],
+                "description": "New runs use cli. Omission or legacy auto resolves to CLI without host capabilities. Native/paseo are retained only for reading saved presets and require explicit migration before dispatch."
               },
               "inherit_model": {
-                "const": true
+                "const": true,
+                "description": "Legacy native-only field retained for preset migration. New CLI dispatch requires an exact model."
+              },
+              "billing": {
+                "enum": [
+                  "api",
+                  "subscription",
+                  "unknown"
+                ],
+                "description": "User-declared payment mode; omission is unknown. It does not turn shell estimates into billed amounts."
+              },
+              "permissions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "network": {
+                    "type": "boolean"
+                  },
+                  "writable_roots": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^/"
+                    }
+                  },
+                  "shell": {
+                    "type": "boolean"
+                  }
+                }
               }
             },
             "required": [
@@ -132,6 +161,80 @@
                       ]
                     }
                   ]
+                }
+              }
+            ],
+            "allOf": [
+              {
+                "if": {
+                  "required": [
+                    "permissions"
+                  ]
+                },
+                "then": {
+                  "required": [
+                    "transport"
+                  ],
+                  "properties": {
+                    "transport": {
+                      "const": "cli"
+                    },
+                    "harness": {
+                      "enum": [
+                        "codex",
+                        "omp"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "harness": {
+                      "const": "codex"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "permissions": {
+                      "not": {
+                        "required": [
+                          "shell"
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "harness": {
+                      "const": "omp"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "permissions": {
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "network"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "writable_roots"
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             ]
@@ -201,6 +304,43 @@
                   "const": "read-only"
                 }
               }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "executor": {
+                  "required": [
+                    "permissions"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "access"
+                  ],
+                  "properties": {
+                    "access": {
+                      "const": "workspace-write"
+                    }
+                  }
+                },
+                {
+                  "properties": {
+                    "role": {
+                      "const": "implementer"
+                    }
+                  },
+                  "not": {
+                    "required": [
+                      "access"
+                    ]
+                  }
+                }
+              ]
             }
           }
         ]

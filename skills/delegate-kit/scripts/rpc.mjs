@@ -45,17 +45,18 @@ export class FrameDecoder {
 
 export function rpcCommand(executor, dir, resumeFile) {
   const omp = executor.harness === 'omp';
+  const shell = omp && executor.access === 'workspace-write' && executor.permissions?.shell === true;
   const args = ['--mode', 'rpc', '--provider', executor.provider, '--model', executor.model,
     '--no-extensions', '--no-skills', '--tools', executor.access === 'workspace-write'
-      ? (omp ? 'read,grep,glob,edit,write' : 'read,grep,find,ls,edit,write')
+      ? (omp ? `read,grep,glob,edit,write${shell ? ',bash' : ''}` : 'read,grep,find,ls,edit,write')
       : (omp ? 'read,grep,glob' : 'read,grep,find,ls'), '--session-dir', dir];
   if (executor.reasoning !== undefined) args.push('--thinking', executor.reasoning);
   if (resumeFile) args.push(omp ? '--resume' : '--session', resumeFile);
-  if (omp) args.push('--no-title', '--no-prewalk', '--no-lsp', '--no-pty', '--config', `${dir}/runtime-config.json`, '--approval-mode', 'write');
+  if (omp) args.push('--no-title', '--no-prewalk', '--config', `${dir}/runtime-config.json`, '--approval-mode', 'write');
   return omp ? { cmd: 'omp', args } : { cmd: process.execPath, args: [fileURLToPath(new URL('./pi-worker.mjs', import.meta.url)), '--sdk', installedPiSDK(), ...args] };
 }
 export const ompConfig = {
-  advisor: { enabled: false }, prewalk: { enabled: false },
+  advisor: { enabled: false },
   retry: { enabled: false, modelFallback: false, usageAwareFallback: false },
   providers: { anthropic: { serverSideFallback: false } },
   compaction: { enabled: false, asyncEnabled: false, idleEnabled: false },
@@ -66,7 +67,7 @@ export const ompConfig = {
 
 // Own one prompt per RPC process. Responses are correlation-checked; prompt ACK
 // does not settle the turn. The caller owns process termination and durable state.
-export function rpcTurn(child, executor, prompt, onState, onLog, timeoutMs = 30000) {
+export function rpcTurn(child, executor, prompt, onState, onLog, timeoutMs = 30000, onUsage = () => {}) {
   const messages = [];
   let turnMessages = null;
   const pending = new Map(); let serial = 0, settled = false, prompted = false, last = null, failure = null;
@@ -154,7 +155,10 @@ export function rpcTurn(child, executor, prompt, onState, onLog, timeoutMs = 300
       return { text: (message.content || []).filter(p => p.type === 'text').map(p => p.text).join(''),
         usage: sumUsage(turnMessages), actual_model: message.model || null, actual_provider: message.provider || null,
         assertHealthy: () => { if (failure) throw failure; } };
-    } finally { for (const p of pending.values()) clearTimeout(p.timer); pending.clear(); }
+    } finally {
+      for (const p of pending.values()) clearTimeout(p.timer); pending.clear();
+      onUsage(sumUsage(turnMessages || messages));
+    }
   })();
 }
 

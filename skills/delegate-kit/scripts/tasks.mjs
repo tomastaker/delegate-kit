@@ -3,8 +3,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { home, hash, check, identifier, nonempty, keys, readJSON, atomicJSON, accessOf, loadPreset } from './presets.mjs';
-import { admission } from './runtime.mjs';
+import { admission } from './locks.mjs';
 import { createSnapshot, getSnapshot, assertSnapshot, verifySnapshot, contentTree, getEvidence } from './checkpoints.mjs';
+import { runCost, usageSummary } from './usage.mjs';
 
 const active = new Set(['prepared', 'starting', 'running', 'permission', 'cancelling', 'orphaned']);
 const now = () => new Date().toISOString();
@@ -43,15 +44,18 @@ export function validateContract(c) {
   const requirementIds = s.requirements.map(r => r.id); stringList(requirementIds, 'requirements'); stringList(s.non_goals, 'non_goals');
   check(Array.isArray(c.checks), 'Checks required');
   for (const q of c.checks) {
-    keys(q, ['id', 'requirements', 'argv', 'cwd', 'expected_exit', 'required', 'timeout_ms', 'report'], 'check');
+    keys(q, ['id', 'requirements', 'argv', 'cwd', 'expected_exit', 'required', 'timeout_ms', 'report', 'before_edit'], 'check');
+    if (q.before_edit !== undefined) check(typeof q.before_edit === 'boolean', 'check.before_edit must be boolean');
+    check(!q.before_edit || q.report === undefined, 'before_edit is an exit-status smoke check; put test reports on a separate behavioral check');
     identifier(q.id); stringList(q.requirements, 'check.requirements', false);
     check(q.requirements.every(id => requirementIds.includes(id)), 'Unknown check requirement');
     check(Array.isArray(q.argv) && q.argv.length > 0 && q.argv.every(nonempty), 'Check argv required'); relative(q.cwd, 'check.cwd');
     check(Number.isInteger(q.expected_exit) && typeof q.required === 'boolean', 'Check expected_exit and required needed');
     if (q.timeout_ms !== undefined) check(Number.isSafeInteger(q.timeout_ms) && q.timeout_ms > 0, 'Invalid timeout');
     if (q.report !== undefined) {
-      keys(q.report, ['path', 'min_tests'], 'check.report'); if (q.report.path !== undefined) relative(q.report.path, 'report.path');
+      keys(q.report, ['path', 'min_tests', 'targets'], 'check.report'); if (q.report.path !== undefined) relative(q.report.path, 'report.path');
       check(Number.isInteger(q.report.min_tests) && q.report.min_tests > 0, 'report.min_tests must be positive');
+      if (q.report.targets !== undefined) stringList(q.report.targets, 'report.targets', false);
     }
   }
   const checkIds = c.checks.map(q => q.id); stringList(checkIds, 'checks');
@@ -97,9 +101,6 @@ function event(state, kind, payload = {}) {
 }
 function save(state) {
   atomicJSON(fileFor(state.contract.session, state.contract.task), state);
-  // State is authoritative; ledger is a projection. IDs permit deduplication after recovery.
-  const prior = new Set(fs.existsSync(path.join(home(), 'ledger.jsonl')) ? fs.readFileSync(path.join(home(), 'ledger.jsonl'), 'utf8').trim().split('\n').filter(Boolean).flatMap(line => { try { return [JSON.parse(line).event_id]; } catch { return []; } }) : []);
-  for (const e of state.events) if (!prior.has(e.event_id)) fs.appendFileSync(path.join(home(), 'ledger.jsonl'), JSON.stringify(e) + '\n', { mode: 0o600 });
   return state;
 }
 function current(state) {
@@ -155,6 +156,9 @@ function boundCheckpoint(state, id) {
 
 function item(state, id) { const w = state.contract.work_items.find(w => w.id === id); check(w, 'Unknown work item'); return w; }
 function failures(state, id, profile) { return state.submissions.filter(s => s.work_item === id && s.profile === profile && s.outcome === 'failed').length; }
+function retryDecided(state, id) {
+  return state.events.findLastIndex(e => e.kind === 'escalation_decided' && e.work_item === id) > state.events.findLastIndex(e => e.kind === 'solution_submitted' && e.work_item === id);
+}
 function selectedProfile(state, w) { return state.escalations.filter(e => e.work_item === w.id).at(-1)?.profile || w.profile; }
 export function taskOptions(options) {
   const s = readTask(options.session, options.task, true);
@@ -180,8 +184,8 @@ export function taskBinding(options, preset, profiles) {
   check(profiles.length === 1 && profiles[0] === selectedProfile(state, w), 'Profile differs from contract/escalation');
   const agent = preset.agents[profiles[0]];
   const latestSubmission = state.submissions.filter(s => s.work_item === w.id && s.profile === profiles[0] && s.revision === state.revision).at(-1);
-  check(!['uncertain', 'capability'].includes(latestSubmission?.outcome), 'Work item blocked; revise the contract or explicitly escalate');
-  check(failures(state, w.id, profiles[0]) < (w.max_failed_submissions ?? 2), 'escalation_required: submission budget exhausted');
+  check(!['uncertain', 'capability'].includes(latestSubmission?.outcome) || retryDecided(state, w.id), 'Work item blocked; revise the contract or record a retry decision with task escalate');
+  check(failures(state, w.id, profiles[0]) < (w.max_failed_submissions ?? Infinity), 'escalation_required: submission budget exhausted');
   for (const dependency of w.dependencies) {
     const submitted = state.submissions.filter(s => s.work_item === dependency && s.revision === state.revision).at(-1);
     check(submitted?.outcome === 'passed', `Dependency ${dependency} has no submitted result`);
@@ -207,7 +211,10 @@ export function taskBinding(options, preset, profiles) {
     const prefix = (a, b) => a === '.' || b === a || b.startsWith(a.replace(/\/$/, '') + '/');
     check(!w.scope.include.some(a => other.scope.include.some(b => prefix(a, b) || prefix(b, a))), 'Active work items have overlapping ownership; narrow scope or serialize the dependency');
   }
-  return { contract_revision: state.revision, work_item: w.id, resources: w.resources, initial_tree: ownedRuns(state).find(r => r.work_item === w.id)?.initial_tree || contentTree(options.cwd) };
+  return { contract_revision: state.revision, work_item: w.id, resources: w.resources,
+    required_checks: accessOf(agent) === 'workspace-write' ? state.contract.checks.filter(q => q.required && w.checks.includes(q.id)).map(q => q.id) : [],
+    preflight: state.contract.checks.filter(q => q.before_edit && w.checks.includes(q.id)),
+    initial_tree: ownedRuns(state).find(r => r.work_item === w.id)?.initial_tree || contentTree(options.cwd) };
 }
 export function assertBoundRun(m) {
   if (!m.contract_revision) return;
@@ -215,7 +222,7 @@ export function assertBoundRun(m) {
   if (m.checkpoint) { check(state.current_checkpoint === m.checkpoint, 'Stale review checkpoint'); assertSnapshot(boundCheckpoint(state, m.checkpoint)); }
   if (m.work_item) {
     const w = item(state, m.work_item); check(selectedProfile(state, w) === m.profile, 'Executor changed; fresh session required');
-    check(failures(state, w.id, m.profile) < (w.max_failed_submissions ?? 2), 'escalation_required');
+    check(failures(state, w.id, m.profile) < (w.max_failed_submissions ?? Infinity), 'escalation_required');
   }
 }
 export function recordRouting(m) {
@@ -254,8 +261,7 @@ export function escalateTask(session, task, expected, workItem, profile, reason)
     const state = readTask(session, task); revision(state, expected); item(state, workItem); noWriters(state); identifier(profile); check(nonempty(reason), 'Escalation reason required');
     const previousRun = ownedRuns(state).filter(r => r.work_item === workItem).at(-1);
     if (previousRun) check(loadPreset(previousRun.preset).preset.agents[profile], 'Select an already configured profile');
-    check(profile !== selectedProfile(state, item(state, workItem)), 'Escalation must explicitly select another profile');
-    check(failures(state, workItem, profile) < (item(state, workItem).max_failed_submissions ?? 2), 'Selected profile is exhausted');
+    check(failures(state, workItem, profile) < (item(state, workItem).max_failed_submissions ?? Infinity), 'Selected profile is exhausted');
     const e = { work_item: workItem, profile, reason, at: now(), revision: state.revision }; state.escalations.push(e); event(state, 'escalation_decided', e); return save(state);
   });
 }
@@ -415,7 +421,12 @@ export function showTask(session, task) {
   try { current(state); check(!ownedRuns(state).some(r => active.has(r.status)), 'Task has active runs'); if (state.current_checkpoint) assertSnapshot(getSnapshot(state.current_checkpoint), { source: true }); } catch (e) { stale = e.message; }
   const gaps = state.current_checkpoint ? acceptanceGaps(state, boundCheckpoint(state, state.current_checkpoint)) : ['checkpoint:missing'];
   return { ...state, status: stale || state.status === 'verified' && gaps.length ? 'unverified' : state.status, stale, gaps, findings: findings(state),
-    work_items: state.contract.work_items.map(w => ({ id: w.id, profile: selectedProfile(state, w), latest_run: ownedRuns(state).filter(r => r.work_item === w.id).at(-1)?.id || null, outcome: state.submissions.filter(s => s.work_item === w.id && s.revision === state.revision).at(-1)?.outcome || null, failures: failures(state, w.id, selectedProfile(state, w)), escalation_required: failures(state, w.id, selectedProfile(state, w)) >= (w.max_failed_submissions ?? 2) })) };
+    work_items: state.contract.work_items.map(w => {
+      const profile = selectedProfile(state, w), count = failures(state, w.id, profile);
+      const outcome = state.submissions.filter(s => s.work_item === w.id && s.revision === state.revision).at(-1)?.outcome || null;
+      return { id: w.id, profile, latest_run: ownedRuns(state).filter(r => r.work_item === w.id).at(-1)?.id || null, outcome, failures: count,
+        reconsider: count >= 2 && outcome === 'failed' && !retryDecided(state, w.id), escalation_required: count >= (w.max_failed_submissions ?? Infinity) };
+    }) };
 }
 export function taskSummary(session, task) {
   if (!readTask(session, task, true)) return { status: 'standalone_read_only' };
@@ -427,8 +438,9 @@ export function taskReport(session, task) {
     escalations: s.escalations.length, findings: findings(s).length, accepted_first_submission: s.status === 'verified' && s.contract.work_items.every(w => s.submissions.filter(s => s.work_item === w.id).length === 1),
     wall_clock_ms: ['verified', 'accepted_with_exceptions'].includes(s.status) && s.accepted_at ? Date.parse(s.accepted_at) - Date.parse(s.created) : null,
     observed_run_cost_usd: costs.some(n => n !== null && n !== undefined) ? costs.reduce((sum, n) => sum + (n ?? 0), 0) : null,
-    cost_complete: false, cost_source: 'provider-reported run costs; coordinator and human effort not measured', human_repair_time: null, late_regressions: null,
-    profiles: rr.map(r => ({ profile: r.profile, run: r.id, requested: r.executor, confirmed_model: r.actual_model, usage: r.usage, cost_usd: r.cost_usd })) };
+    cost_complete: false, cost_source: 'Legacy sum of shell-reported values, including estimates; use accounting.by_billing. Coordinator not measured.', human_repair_time: null, late_regressions: null,
+    accounting: usageSummary(rr),
+    profiles: rr.map(r => ({ profile: r.profile, run: r.id, requested: r.executor, confirmed_model: r.actual_model, usage: r.usage, cost_usd: r.cost_usd, cost: runCost(r) })) };
 }
 
 export function boundContext(m) {
@@ -436,8 +448,14 @@ export function boundContext(m) {
   const s = readTask(m.parent_session, m.task);
   const work = m.work_item ? item(s, m.work_item) : null;
   const checks = work ? s.contract.checks.filter(q => work.checks.includes(q.id)) : s.contract.checks;
-  return JSON.stringify({ specification: s.contract.specification, quality: s.contract.quality,
-    ...(work ? { work_item: work } : { review: s.contract.review }), checks, finishing: s.contract.finishing });
+  const spec = s.contract.specification;
+  // A pointer outside the worktree is not sufficient: e.g. OpenCode denies
+  // external_directory. Supply the exact source once rather than silently losing
+  // interfaces/constraints that cannot be inferred from check-to-requirement links.
+  const fullText = fs.readFileSync(m.checkpoint ? getSnapshot(m.checkpoint).spec_path : spec.path, 'utf8');
+  check(hash(fullText) === spec.digest, 'Specification changed before dispatch');
+  return JSON.stringify({ specification: { ...spec, content: fullText }, quality: s.contract.quality,
+    ...(work ? { work_item: work, dependencies: s.contract.work_items.filter(w => work.dependencies.includes(w.id)).map(w => ({ id: w.id, scope: w.scope })) } : { review: s.contract.review }), checks, finishing: s.contract.finishing });
 }
 
 export function recordCompletion(m) {

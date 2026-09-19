@@ -1,26 +1,22 @@
 # Compatibility and tested scope
 
-| Path | Implemented | Automated evidence | Local evidence | Live model call |
-|---|---|---|---|---|
-| Codex CLI | fresh, result, exact resume, cancellation | fake CLI tests | 0.153.4 | 2026-09-16: Sol fix + exact resume, Luna independent review + cancellation; isolated fixture, low reasoning |
-| Claude CLI | fresh, result, exact resume | adapter + supervisor fixtures | help/version 2.1.268 | not run |
-| Gemini CLI | fresh, result, exact resume | adapter + supervisor fixtures | help/version 0.36.0 | not run |
-| OpenCode | permissions, provider/model, exact resume | permission/adapter fixtures | help/version 1.18.23 | not run |
-| Pi | official RPC via installed SDK, isolated settings, exact resume | SDK/protocol + fake process tests | not installed | not run |
-| OMP | RPC v2 negotiation/chunks, terminal result, resume | protocol + fake CLI tests | 18.1.17 ready/state handshake, no prompt | not run |
-| Native Codex/Claude | prepare, exact invocation, unique definitions, attach/events | bridge fixtures | tool/schema-dependent; no agent dispatched | not run |
-| Paseo | materialized create/follow-up settings, daemon/workspace lease | bridge fixtures | no daemon/tools available | not run |
+All new execution uses CLI/RPC. The coordinator may run in any chat with shell access to the execution machine, Node 20+, Git and the selected authorized CLI. No native-child UI, host capability negotiation or Paseo daemon is required. A cloud chat without access to the execution machine cannot gain it by loading this skill.
 
-Native writers require verified host enforcement of the reserved worktree binding. Hosts that cannot establish it must use an explicitly selected CLI route.
+| Executor | Automated evidence | Observed installation | Live model evidence |
+|---|---|---|---|
+| Codex CLI | lifecycle, resume, cancellation, sandbox readiness and acceptance fixtures | 0.153.4; no-model sandbox probes at 0.154.0 | 2026-09-16: Sol fix/resume, Luna review and cancellation in an isolated fixture |
+| Claude CLI | adapter and supervisor fixtures | help/version 2.1.268 | not run |
+| Gemini CLI | adapter and supervisor fixtures | help/version 0.36.0 | not run |
+| OpenCode | permission and adapter fixtures | help/version 1.18.23 | not run |
+| Pi | SDK bootstrap, RPC and fake-process fixtures | not installed | not run |
+| OMP | RPC v2, chunks, terminal result, resume and failure fixtures | 18.1.17 no-prompt handshake/state, including inherited LSP/PTY startup | not run |
 
-Native Pi/OMP and a dedicated T3 bridge are not implemented; Pi and OMP use the explicit CLI/RPC transport. A direct CLI does not become a Paseo UI agent. Desktop/cloud chats need actual shell and host tools. [Adapter contracts, official sources and limitations](providers.md).
+The dated Codex live smoke predates the CLI-only simplification and in-place final checks. It establishes that tested lifecycle, not validation of every current route or semantic routing quality. It used three completed prompts and one cancelled dispatch; completed-turn usage was 165,014 input tokens (112,128 cached) and 1,097 output tokens. Money and quota percentage were unavailable. No new paid test is implied.
 
-Worktrees coordinate writers, not all filesystem permissions. Read-only tool controls differ by executor. Pi/OMP writers deliberately exclude shell and internal delegation; the coordinator performs command checks and authorized commits. Runtime usage is null when unavailable, not zero. The runtime counts its own reservations/continuations and owned worktrees; it cannot account for arbitrary agents launched outside it. No savings or model-quality percentage is promised.
+Native/Paseo launch and continuation are retired. Saved presets remain readable and unchanged; new dispatch refuses those routes explicitly. Compatibility handlers only reconcile unfinished old runs. See [migration](hosts.md).
 
+Worktrees and leases coordinate managed writers/checks; they are not an OS security sandbox. Read-only controls differ by executor. Pi writers lack shell; OMP Bash is explicit and must also satisfy command approvals. Keep state outside worker-owned scope. Runtime cannot control arbitrary processes running under the same user account.
 
-The Codex smoke used three completed prompts and one cancelled dispatch. Both completed sessions recorded the requested model in Codex turn metadata. This proves the tested CLI lifecycle, not general coordinator routing quality or other providers. CLI-reported completed-turn usage: 165,014 input tokens (112,128 cached), 1,097 output tokens. Currency cost and quota percentage were not provided.
+Final checks run in the prepared integration workspace under its lease, comparing source content to the checkpoint before and after execution. Independent reviewers use the frozen code/specification. Project scripts own their servers, databases, browser sessions and cleanup. External target identity and environment changes require actual project-level evidence; a correct cwd alone does not prove them. Only task acceptance can report verified completion.
 
-
-Task acceptance is the only acceptance workflow. Managed writers require a task contract; standalone read-only work can run from a brief. Presets without `routing` remain valid. Optional tiers preserve exact executor settings. `review.also_run` belongs only to read-only reviewers; implementation review requirements belong in the task contract.
-
-Checkpoint verification relies on the trusted coordinator/runtime and declared environment. Worker tool restrictions are not OS isolation against arbitrary processes using the same user account. Keep task state outside worker-owned source scope, use the supported managed surfaces, and treat edits to evidence/state outside those surfaces as outside the trust boundary. New deterministic fixtures do not establish live provider behavior or the coordinator's semantic risk judgment; no new paid route is implied by this release.
+Fixtures validate mechanics, not model quality, account access or every real browser/database environment. Usage and costs remain partial when unavailable; no universal savings or quality percentage is promised. [Executor contracts and primary sources](providers.md).

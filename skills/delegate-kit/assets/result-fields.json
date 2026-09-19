@@ -9,7 +9,7 @@
   },
   "summary": {
     "type": "string",
-    "description": "2-6 sentences: what was done or found, and the single most important caveat."
+    "description": "Concise decision-ready account of the outcome, requirements completed and material caveats. Keep unresolved issues visible; use accessible artifacts only for optional detail."
   },
   "changes": {
     "type": "array",

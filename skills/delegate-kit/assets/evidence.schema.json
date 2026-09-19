@@ -146,6 +146,32 @@
     "report_path": {
       "type": "string",
       "pattern": "^/"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "identity",
+          "source_tree"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "identity": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "source_tree": {
+            "type": "string",
+            "pattern": "^[a-f0-9]+$"
+          }
+        }
+      }
     }
   },
   "required": [

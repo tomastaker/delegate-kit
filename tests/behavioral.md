@@ -1,6 +1,6 @@
 # Behavioral acceptance protocol
 
-These cases are prepared for manual or explicitly authorized model evaluation. They are not claimed as executed model tests. Use the same frozen repository, task, model settings and authorization for baseline-without-skill, v1 and v2. Configure actual permitted models in place of the symbolic executor IDs; no commercial model name is a test condition.
+These cases are prepared for manual or explicitly authorized model evaluation. They are not claimed as executed model tests. Use a fixed repository, task and configured model settings when an evaluation is authorized. Configure actual permitted models in place of the symbolic executor IDs; no commercial model name is a test condition.
 
 Use one complete preset with descriptions for general research, alternative research, ordinary implementation, UI implementation, complex contract work, independent review and an optional planner. Copy it to Y2 and change a chosen executor explicitly. Fix the repository revision and retain session/run handles, briefs, accepted results, checks and usage artifacts.
 
@@ -37,12 +37,27 @@ Run these only as an authorized behavioral evaluation; deterministic enforcement
 | Short critical patch | Tiny transaction/idempotency change: high consequence overrides small size and settled plan |
 | Plan then reassess | Planner resolves design but high risk remains: no automatic economy downgrade |
 | Weak verifier | Only lint available for changed business rules: establish behavioral verification before economy assignment |
-| Tool gap | OMP/Pi writer cannot run shell/browser: trusted coordinator runner performs necessary checks; worker claim is insufficient |
+| Tool gap | Readiness uses the actual writer tools before editing; unavailable required commands block the assignment. OMP Bash is explicit and its approvals remain in force. Final runtime checks and review are still required |
 | Missing hard | Team lacks hard tier: select an already configured suitable profile or surface blocker; no account/model substitution |
 | Coordinator authorship | Coordinator writes substantial code: independent checkpoint review still occurs |
-| Semantic failures | Initial failed submission and one targeted correction both fail: escalation retains work-item history; internal loops and transport errors do not consume that count |
+| Semantic failures | Initial failed submission and one targeted correction both fail: reassessment retains work-item history and may keep the same profile; internal loops and transport errors do not consume that count |
 | Stale evidence | Edit after successful verification/review: prior evidence cannot accept the changed integrated checkpoint |
 | Claims | Independent streams keep running while two colliding database/port users serialize or receive distinct resources |
 | Misleading success | Worker exits successfully with no meaningful result: task acceptance refuses missing criteria/check/review evidence |
 
-For a pilot, compare unchanged baseline, new gates with the same models, then optional economy profiles; evaluate optional hard separately. Use representative mechanical, behavioral, uncertain, critical, UI and parallel tasks. Record defects, human rework, integration cost, tail latency and missing usage, not only token prices or medians. Local hardware changes require a separate comparison. Do not claim savings percentages or auto-edit presets from this unexecuted protocol.
+For an authorized pilot, exercise the configured profiles on representative tasks. Use representative mechanical, behavioral, uncertain, critical, UI and parallel tasks. Record defects, human rework, integration cost, tail latency and missing usage, not only token prices or medians. Local hardware changes require a separate comparison. Do not claim savings percentages or auto-edit presets from this unexecuted protocol.
+
+| Additional case | Observable outcome |
+|---|---|
+| Unreproduced bug | Reproduction or concrete causal evidence precedes a fix; without either, report uncertainty rather than claim a refactor fixed the complaint |
+| Coordinator triage | An obvious omitted requirement returns to the worker before detailed independent review; the coordinator does not repeat the entire review |
+| Own environment | The worker may start its own local application/DB/browser; an occupied port does not authorize killing another task's service |
+| Foreign target | An application check observes the actual server source tree; a target from another worktree cannot provide matching checkpoint evidence |
+| Partial spend | Estimates, billing modes and unknown amounts remain distinct; failed attempts and continuations are included without inventing coordinator usage |
+
+| Simplification case | Observable outcome |
+|---|---|
+| Prepared integration environment | Final checks can read ignored local dependencies; reviewers still inspect frozen code; source edits invalidate evidence |
+| Legacy preset | Native/Paseo is refused without changing the saved preset or invoking another account; old active runs remain reconcilable |
+| Same-profile recovery | A corrected approach or resolved environment blocker can retain the executor; explicit failure/run limits still apply |
+| Verification ownership | A source-workspace check cannot overlap a managed writer, including through another runtime home |

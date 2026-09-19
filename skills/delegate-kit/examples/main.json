@@ -3,7 +3,7 @@
   "id": "main",
   "name": "Main team",
   "description": "Research, planning, implementation and independent review, with specialists for complex investigations and UI work.",
-  "coordination": "Use researcher for bounded lookups and researcher-hard for investigations with uncertain causes or interacting failures. They are alternatives, not mandatory consecutive steps. Use planner when the approach, dependencies, risks or acceptance checks need to be worked out before implementation. Assign ordinary implementation to implementer and substantial interface work to implementer-ui. Choose reviewer for ordinary changes and reviewer-hard when the cost of failure or impact is high. Reviewers receive the specification and frozen diff without the author conclusions. The coordinator chooses the next step from the evidence; not every task needs every role.",
+  "coordination": "Use researcher for bounded lookups and researcher-hard for investigations with uncertain causes or interacting failures. They are alternatives, not mandatory consecutive steps. Use planner when the approach, dependencies, risks or acceptance checks need to be worked out before implementation. Choose implementer-economy, implementer or implementer-max by determination, behavioral risk, meaningful verification and available tools. These are starting profiles, not a mandatory escalation sequence. Use implementer-ui only after its shell, browser checks and test environment are ready. Choose reviewer for ordinary changes and reviewer-hard when the cost of failure or impact is high. Reviewers receive the specification and frozen diff without the author conclusions. The coordinator chooses the next step from the evidence; not every task needs every role.",
   "defaults": {
     "researcher": "researcher",
     "planner": "planner",
@@ -47,6 +47,21 @@
       },
       "access": "read-only"
     },
+    "implementer-economy": {
+      "role": "implementer",
+      "when": "Determined, bounded ordinary-risk implementation with the necessary tools and checks that detect incorrect behavior; independent review remains required.",
+      "instructions": "Implement the requested outcome with the smallest complete change in the assigned worktree. Follow project patterns and preserve others' changes. Add a regression test for a fixed bug and run relevant checks.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-5.6-luna",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "workspace-write",
+      "routing": {
+        "tier": "economy"
+      }
+    },
     "implementer": {
       "role": "implementer",
       "when": "Ordinary features, bug fixes, tests and documentation with a clear outcome and scope.",
@@ -57,18 +72,39 @@
         "reasoning": "medium",
         "transport": "cli"
       },
-      "access": "workspace-write"
+      "access": "workspace-write",
+      "routing": {
+        "tier": "standard"
+      }
+    },
+    "implementer-max": {
+      "role": "implementer",
+      "when": "Implementation with unresolved design questions, interacting invariants or a high cost of failure; choose directly when its capabilities fit.",
+      "instructions": "Implement the requested outcome with the smallest complete change in the assigned worktree. Follow project patterns and preserve others' changes. Add a regression test for a fixed bug and run relevant checks.",
+      "executor": {
+        "harness": "codex",
+        "model": "gpt-6-astra",
+        "reasoning": "medium",
+        "transport": "cli"
+      },
+      "access": "workspace-write",
+      "routing": {
+        "tier": "hard"
+      }
     },
     "implementer-ui": {
       "role": "implementer",
       "when": "Design or substantially change an interface, components, interactions, responsive behavior or visual styling.",
-      "instructions": "Implement the interface in the assigned worktree using the project components and design system. Verify the affected user flow in the running UI and inspect the rendered result for overlap, clipping and responsive issues. If the executor lacks browser or shell tools, report the exact checks for the coordinator to perform before acceptance. Preserve others' changes.",
+      "instructions": "Implement the interface in the assigned worktree using the project components and design system. Verify the affected user flow in the running UI and inspect the rendered result for overlap, clipping and responsive issues. Before editing, verify that the actual Bash tool can run the project setup, checks and browser scenario. If tools or the environment are unavailable, return blocked before implementation. Preserve others' changes.",
       "executor": {
         "harness": "omp",
         "provider": "openrouter",
         "model": "qwen/qwen3.8-max",
         "reasoning": "medium",
-        "transport": "cli"
+        "transport": "cli",
+        "permissions": {
+          "shell": true
+        }
       },
       "access": "workspace-write"
     },

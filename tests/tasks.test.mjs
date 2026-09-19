@@ -5,36 +5,51 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { savePreset, loadPreset, setDefault, hash } from '../skills/delegate-kit/scripts/presets.mjs';
-import { prepare, launch, attach, ingest, getRun, resume, status, overview } from '../skills/delegate-kit/scripts/runtime.mjs';
+import { prepare, launch, getRun, resume, status, overview } from '../skills/delegate-kit/scripts/runtime.mjs';
+import { withVerificationLease } from '../skills/delegate-kit/scripts/locks.mjs';
 import { resultSchema } from '../skills/delegate-kit/scripts/results.mjs';
-import { openTask, readTask, checkTask, normalizeContract, submitTask, checkpointTask, verifyTask, acceptTask, showTask, escalateTask, disposeFinding, taskSummary } from '../skills/delegate-kit/scripts/tasks.mjs';
+import { openTask, readTask, checkTask, normalizeContract, submitTask, checkpointTask, verifyTask, acceptTask, showTask, escalateTask, disposeFinding, taskSummary, boundContext } from '../skills/delegate-kit/scripts/tasks.mjs';
 
 const done = { status: 'done', summary: 'Fixture completion', changes: [], checks_run: [], not_verified: [], plan: [], findings: [], questions: [], sources: [], next_steps: [] };
 const session = 'fixture:task';
-const cap = cwd => ({ verified: true, host: 'codex', version: 'fixture-v1', harness: 'codex', transport: 'native', resume: true, result: true, cancel: true, access: ['read-only', 'workspace-write'], models: [{ id: 'fixture-model' }], workspace_binding: { cwd, enforced: true } });
 function fixture(fn, amend = () => {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dk-task-'));
-  const previous = process.env.DELEGATE_KIT_HOME;
+  const previous = process.env.DELEGATE_KIT_HOME, oldPath = process.env.PATH;
   process.env.DELEGATE_KIT_HOME = path.join(root, 'state');
   const repo = path.join(root, 'repo'), wt = path.join(root, 'writer'), brief = path.join(root, 'spec.md');
   fs.mkdirSync(repo); fs.writeFileSync(brief, 'Implement the approved value.');
+  const bin = path.join(root, 'bin'); fs.mkdirSync(bin);
+  const output = path.join(root, 'result.json');
+  fs.writeFileSync(path.join(bin, 'codex'), `#!${process.execPath}
+const fs=require('node:fs'), args=process.argv.slice(2);
+fs.copyFileSync(${JSON.stringify(output)}, args[args.indexOf('-o')+1]);
+console.log(JSON.stringify({type:'thread.started',thread_id:args.includes('resume')?args.at(-2):require('node:crypto').randomUUID()}));
+console.log(JSON.stringify({type:'turn.completed'}));
+`, { mode: 0o755 });
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   const git = args => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   try {
     git(['init', '-q']); fs.writeFileSync(path.join(repo, 'value.txt'), 'before\n'); git(['add', '.']);
     git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Initial']);
     git(['worktree', 'add', '-qb', 'fixture-writer', wt]);
-    const agent = role => ({ role, when: 'Fixture work', executor: { harness: 'codex', transport: 'native', model: 'fixture-model' } });
+    const agent = role => ({ role, when: 'Fixture work', executor: { harness: 'codex', transport: 'cli', model: 'fixture-model' } });
     savePreset({ schema_version: 2, id: 'Test', agents: { writer: agent('implementer'), stronger: agent('implementer'), economy: { ...agent('implementer'), routing: { tier: 'economy' } }, reviewer: agent('reviewer') } });
     setDefault('Test');
     const work = { id: 'work', required: true, profile: 'writer', routing: { defined: true, risk: 'ordinary', reason: 'Bounded file replacement' }, scope: { include: ['value.txt'], exclude: [] }, dependencies: [], checks: ['value'], resources: [] };
     const contract = { version: 1, session, task: 'task', repo, base: 'HEAD', specification: { path: brief, digest: hash(fs.readFileSync(brief, 'utf8')), goal: 'Approved value', requirements: [{ id: 'R1', text: 'The value is after' }], non_goals: [] }, work_items: [work], checks: [{ id: 'value', requirements: ['R1'], argv: [process.execPath, '-e', "const fs=require('node:fs');if(fs.readFileSync('value.txt','utf8')!=='after\\n')process.exit(1)"], cwd: '.', expected_exit: 0, required: true }], review: { required: true, profiles: ['reviewer'], coverage: ['R1'] }, quality: [], finishing: [], integration_owner: 'coordinator' };
     amend(contract);
     const state = openTask(contract);
-    const prepareRuns = (extra = {}) => prepare({ session, task: 'task', agent: 'writer', workItem: 'work', cwd: wt, brief, capabilities: [cap(wt)], ...extra }).runs;
+    const prepareRuns = (extra = {}) => prepare({ session, task: 'task', agent: 'writer', workItem: 'work', cwd: wt, brief, ...extra }).runs;
     const prep = extra => prepareRuns(extra)[0];
     const complete = (run, result = done) => {
-      if (getRun(run.id).status === 'prepared') launch(run.id); const host = getRun(run.id).transport_session_id || `host-${run.id}`; attach(run.id, host); const token = getRun(run.id).claim;
-      ingest(run.id, { event: 'complete', hostAgent: host, stopped: true, dispatchToken: token, result: { dispatch_token: token, result: Object.fromEntries(Object.entries(result).filter(([key]) => Object.hasOwn(resultSchema(getRun(run.id).agent).properties, key))) } }); return getRun(run.id);
+      const m = getRun(run.id);
+      const payload = { check_results: (m.required_checks || []).map(id => ({ id, status: 'passed', evidence: 'Fixture command outcome' })), ...result };
+      fs.writeFileSync(output, JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([key]) => Object.hasOwn(resultSchema(m.agent, m.required_checks).properties, key)))));
+      launch(run.id);
+      const deadline = Date.now() + 10000;
+      while (['starting', 'running'].includes(getRun(run.id).status) && Date.now() < deadline) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      assert.ok(!['starting', 'running'].includes(getRun(run.id).status), 'Fixture CLI did not finish');
+      return getRun(run.id);
     };
     const submit = (run, outcome = 'passed') => submitTask(session, 'task', state.revision, run.work_item || 'work', run.id, outcome, 'Observed fixture result');
     const ready = () => {
@@ -45,11 +60,40 @@ function fixture(fn, amend = () => {}) {
     const review = (checkpoint, result = done) => complete(prep({ agent: 'reviewer', workItem: undefined, checkpoint: checkpoint.id }), result);
     return fn({ root, repo, wt, brief, contract, state, prep, prepareRuns, complete, submit, ready, review, git });
   } finally {
+    process.env.PATH = oldPath;
     if (previous === undefined) delete process.env.DELEGATE_KIT_HOME; else process.env.DELEGATE_KIT_HOME = previous;
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
-
+test('managed worker done with an unexecuted mandatory check is refused before integration', () => fixture(({ prep, complete, submit }) => {
+  const run = prep();
+  const result = complete(run, { ...done, check_results: [{ id: 'value', status: 'not_run', evidence: 'Database unavailable' }] });
+  assert.equal(result.status, 'failed');
+  assert.match(result.error, /Mandatory checks/);
+  assert.throws(() => submit(result), /done result/);
+}));
+test('worker context includes full specification, local checks and all shared constraints', () => fixture(({ prep, contract }) => {
+  const run = prep();
+  const context = JSON.parse(boundContext(getRun(run.id)));
+  assert.equal(context.specification.content, 'Implement the approved value.');
+  assert.deepEqual(context.specification.requirements, contract.specification.requirements);
+  assert.deepEqual(context.quality, contract.quality);
+  assert.deepEqual(context.checks.map(q => q.id), ['value']);
+  const prompt = fs.readFileSync(path.join(run.logs, 'prompt.md'), 'utf8');
+  assert.equal(prompt.split('Implement the approved value.').length - 1, 1, 'An identical spec brief is included once');
+}));
+test('read-only review receives evidence analysis without writer readiness duties', () => fixture(({ ready, prep }) => {
+  const checkpoint = ready(), run = prep({ agent: 'reviewer', workItem: undefined, checkpoint: checkpoint.id });
+  const prompt = fs.readFileSync(path.join(run.logs, 'prompt.md'), 'utf8');
+  assert.match(prompt, /Review frozen checkpoint/);
+  assert.equal(prompt.includes('Before editing, establish'), false);
+  assert.equal(prompt.includes('done requires all check_results'), false);
+}));
+test('readiness smoke checks reject report-dependent configuration before dispatch', () => {
+  assert.throws(() => fixture(() => {}, c => {
+    c.checks[0].before_edit = true; c.checks[0].report = { min_tests: 1 };
+  }), /exit-status smoke check/);
+});
 test('task lifecycle requires runtime checks and fresh review before verified acceptance', () => fixture(({ state, ready, review }) => {
   const cp = ready();
   assert.throws(() => acceptTask(session, 'task', state.revision, cp.id), /review:reviewer/);
@@ -72,14 +116,14 @@ test('reviewer done with a substantive finding blocks verification; exceptions r
   const accepted = acceptTask(session, 'task', state.revision, cp.id, 'User explicitly accepts the demonstrated gap');
   assert.equal(accepted.status, 'accepted_with_exceptions'); assert.ok(accepted.exceptions.some(g => g.startsWith('finding:')));
 }));
-test('two failed submissions exhaust the profile and require explicit fresh-profile escalation', () => fixture(({ state, prep, complete, submit }) => {
+test('explicit failed-submission limits still require a different unexhausted profile', () => fixture(({ state, prep, complete, submit }) => {
   for (let i = 0; i < 2; i++) { const run = prep(); complete(run, { ...done, status: 'failed' }); submit(getRun(run.id), 'failed'); }
   assert.equal(showTask(session, 'task').work_items[0].escalation_required, true);
   assert.throws(() => prep(), /escalation_required/);
   escalateTask(session, 'task', state.revision, 'work', 'stronger', 'Repeated incorrect solutions');
   const next = prep({ agent: 'stronger' }); complete(next);
   assert.equal(getRun(next.id).resume_of, null); assert.equal(showTask(session, 'task').work_items[0].profile, 'stronger');
-}));
+}, c => { c.work_items[0].max_failed_submissions = 2; }));
 test('economy writers require ordinary risk, objective checks and independent review', () => {
   for (const [mutate, error] of [
     [c => { c.work_items[0].routing.risk = 'high'; }, /ordinary-risk/],
@@ -119,15 +163,15 @@ test('contract revision conflicts and worker depth reject task policy changes', 
 test('initial checkpoint reviewer cannot reuse a stopped writer session', () => fixture(({ state, prep, complete, submit, wt }) => {
   const writer = prep(); fs.writeFileSync(path.join(wt, 'value.txt'), 'after\n'); complete(writer); submit(getRun(writer.id));
   const cp = checkpointTask(session, 'task', state.revision, wt);
-  const reviewer = prep({ agent: 'reviewer', workItem: undefined, checkpoint: cp.id }); launch(reviewer.id);
-  assert.throws(() => attach(reviewer.id, getRun(writer.id).transport_session_id), /fresh executor session/);
-  assert.equal(getRun(reviewer.id).host_attached, false);
+  const reviewer = prep({ agent: 'reviewer', workItem: undefined, checkpoint: cp.id });
+  assert.equal(getRun(reviewer.id).transport_session_id, null);
   complete(reviewer);
+  assert.notEqual(getRun(reviewer.id).transport_session_id, getRun(writer.id).transport_session_id);
 }));
 function reviewerPair() {
   const loaded = loadPreset('Test');
   loaded.preset.agents.reviewer.review = { also_run: ['companion'] };
-  loaded.preset.agents.companion = { role: 'reviewer', when: 'Second independent lens', executor: { harness: 'codex', transport: 'native', model: 'fixture-model' } };
+  loaded.preset.agents.companion = { role: 'reviewer', when: 'Second independent lens', executor: { harness: 'codex', transport: 'cli', model: 'fixture-model' } };
   savePreset(loaded.preset, loaded.revision);
 }
 test('also_run companion uncertainty blocks acceptance and its continuation preserves the review group', () => fixture(({ state, ready, prepareRuns, complete, brief }) => {
@@ -180,8 +224,8 @@ test('three work items share one profile concurrently with separate worktrees an
   git(['worktree', 'add', '-qb', 'fixture-second', second]);
   git(['worktree', 'add', '-qb', 'fixture-third', third]);
   const a = prep();
-  const b = prep({ workItem: 'second', cwd: second, capabilities: [cap(second)] });
-  const c = prep({ workItem: 'third', cwd: third, capabilities: [cap(third)] });
+  const b = prep({ workItem: 'second', cwd: second });
+  const c = prep({ workItem: 'third', cwd: third });
   assert.deepEqual([a, b, c].map(r => getRun(r.id).status), ['prepared', 'prepared', 'prepared']);
   assert.equal(new Set([a, b, c].map(r => r.id)).size, 3);
   complete(a, { ...done, status: 'failed' }); submit(getRun(a.id), 'failed');
@@ -224,7 +268,7 @@ test('a new writer on another worktree supersedes old acceptance even before int
   for (const outcome of ['unsubmitted', 'failed']) fixture(({ root, state, ready, review, git, prep, complete, submit }) => {
     const cp = ready(); review(cp); acceptTask(session, 'task', state.revision, cp.id);
     const another = path.join(root, 'another-writer'); git(['worktree', 'add', '-qb', 'another-writer', another]);
-    const run = prep({ cwd: another, capabilities: [cap(another)] });
+    const run = prep({ cwd: another });
     assert.equal(readTask(session, 'task').current_checkpoint, null);
     assert.equal(showTask(session, 'task').status, 'unverified');
     complete(run, outcome === 'failed' ? { ...done, status: 'failed' } : done);
@@ -334,4 +378,42 @@ test('missing saved evidence removes verified status from task and team overview
   fs.unlinkSync(readTask(session, 'task').evidence[0].stdout_path);
   assert.equal(showTask(session, 'task').status, 'unverified');
   assert.equal(overview({ session, task: 'task' }).summary.verified_tasks, 0);
+}));
+
+
+test('repeated failures advise reconsideration without imposing a model switch', () => fixture(({ state, prep, complete, submit }) => {
+  for (let i = 0; i < 2; i++) { const r = prep(); complete(r, { ...done, status: 'failed' }); submit(r, 'failed'); }
+  const work = showTask(session, 'task').work_items[0];
+  assert.equal(work.reconsider, true); assert.equal(work.escalation_required, false);
+  escalateTask(session, 'task', state.revision, 'work', 'writer', 'The reproduction was incomplete; retain the same executor with the corrected case');
+  assert.equal(showTask(session, 'task').work_items[0].reconsider, false);
+  complete(prep());
+}));
+
+test('a capability blocker can be resolved with the same configured executor', () => fixture(({ state, prep, complete, submit }) => {
+  const r = prep(); complete(r, { ...done, status: 'blocked' }); submit(r, 'capability');
+  assert.throws(() => prep(), /Work item blocked/);
+  escalateTask(session, 'task', state.revision, 'work', 'writer', 'The assigned test database is now available');
+  complete(prep());
+}));
+
+
+test('verification excludes writers across runtime homes without blocking another worktree', () => fixture(({ root, wt, prep, complete, git }) => {
+  const original=process.env.DELEGATE_KIT_HOME, alternate=path.join(root,'other-runtime');
+  fs.cpSync(original,alternate,{recursive:true});
+  const other=path.join(root,'other-worktree'); git(['worktree','add','-qb','parallel-check',other]);
+  withVerificationLease(wt,()=>{
+    process.env.DELEGATE_KIT_HOME=alternate;
+    try { assert.throws(()=>prep(),/Worktree already owned/); }
+    finally { process.env.DELEGATE_KIT_HOME=original; }
+    const r=prep({cwd:other}); complete(r);
+  });
+  complete(prep());
+}));
+
+test('task events and accounting do not depend on a writable duplicate ledger', () => fixture(({ root, ready }) => {
+  const ledger=path.join(root,'state/ledger.jsonl'); fs.mkdirSync(ledger);
+  const cp=ready();
+  assert.ok(cp.id); assert.ok(readTask(session,'task').events.some(e=>e.kind==='check_completed'));
+  assert.equal(fs.statSync(ledger).isDirectory(),true);
 }));

@@ -21,13 +21,13 @@ function args(input) {
 }
 const optKeys = {
   context: ['session', 'preset', 'task-only'], catalog: ['session', 'preset', 'task-only', 'role'],
-  presets: ['file', 'revision'], prepare: ['session', 'preset', 'task-only', 'task', 'agent', 'role', 'work-item', 'checkpoint', 'brief', 'cwd', 'capabilities', 'workspace', 'timeout-ms', 'stall-ms', 'max-workers', 'max-writers', 'max-runs', 'max-retries'],
+  presets: ['file', 'revision'], prepare: ['session', 'preset', 'task-only', 'task', 'agent', 'role', 'work-item', 'checkpoint', 'brief', 'cwd', 'capabilities', 'timeout-ms', 'stall-ms', 'max-workers', 'max-writers', 'max-runs', 'max-retries'],
   run: [], attach: ['host-agent', 'workspace-id'], status: [], result: [], overview: ['session', 'task'], watch: ['session', 'task', 'after', 'timeout-ms', 'full'], wait: ['timeout-ms'], resume: ['brief'], cancel: [], recover: ['confirmed-not-started', 'evidence'],
   'dispatch-failed': ['dispatch-token', 'confirmed-not-started', 'evidence'],
   event: ['host-agent', 'event', 'file', 'stopped', 'dispatch-token', 'progress'], doctor: [],
   task: ['session', 'task', 'contract', 'revision', 'reason', 'checkpoint', 'work-item', 'run', 'outcome', 'agent', 'finding', 'resolution', 'authorization', 'evidence', 'source', 'cwd', 'format', 'details', 'rerun'],
   checkpoint: ['session', 'task', 'revision', 'cwd'], verify: ['check'],
-  materialize: ['directory'], _supervise: ['claim'], help: [], start: [],
+  _supervise: ['claim'], help: [], start: [],
 };
 function taskView(state, details) {
   if (details) return state;
@@ -62,7 +62,7 @@ export async function main(input = process.argv.slice(2)) {
       throw new Error('Use presets list|audit|show ID|validate --file FILE|save --file FILE [--revision HASH]|copy X1 Y2|set-default ID');
     }
     case 'prepare': return prepare({ ...selection, task: o.task, agent: o.agent, role: o.role, workItem: o['work-item'], checkpoint: o.checkpoint, brief: o.brief, cwd: o.cwd, timeoutMs: ms, stallMs: o['stall-ms'] === undefined ? undefined : Number(o['stall-ms']),
-      capabilities: o.capabilities ? readJSON(o.capabilities) : [], workspace: o.workspace ? readJSON(o.workspace) : null,
+      capabilities: o.capabilities ? readJSON(o.capabilities) : [],
       limits: Object.fromEntries(Object.entries(o).filter(([k]) => k.startsWith('max-'))) });
     case 'task': {
       const authorization = o.authorization ? fs.readFileSync(o.authorization, 'utf8') : undefined;
@@ -82,7 +82,7 @@ export async function main(input = process.argv.slice(2)) {
         check(!o.format || ['json', 'csv'].includes(o.format), 'Use --format json|csv');
         if (o.format === 'csv') {
           const entries = Object.entries(report).filter(([, value]) => !Array.isArray(value));
-          const csv = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
+          const csv = value => '"' + (value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '')).replaceAll('"', '""') + '"';
           return { format: 'csv', content: entries.map(([key]) => csv(key)).join(',') + '\n' + entries.map(([, value]) => csv(value)).join(',') + '\n' };
         }
         return report;
@@ -103,24 +103,12 @@ export async function main(input = process.argv.slice(2)) {
     case 'cancel': return cancel(action);
     case 'recover': return recover(action, { confirmedNotStarted: o['confirmed-not-started'], evidence: o.evidence ? fs.readFileSync(o.evidence, 'utf8') : undefined });
     case 'doctor': return { executors: discover(), root: home(), note: 'No model calls made. Installed/version is not proof of authorization. See references/providers.md.' };
-    case 'materialize': {
-      const m = getRun(action), definition = m.invoke?.definition;
-      check(m.executor.transport === 'native' && definition && m.status === 'starting', 'Run must return a native definition before materialization');
-      check(o.directory, '--directory must be the verified host agent directory');
-      const file = path.join(path.resolve(o.directory), `${definition.name}.md`);
-      const text = `---\nname: ${definition.name}\ndescription: Isolated Delegate Kit run ${m.id}\nmodel: ${JSON.stringify(definition.model)}\n${definition.effort ? `effort: ${JSON.stringify(definition.effort)}\n` : ''}tools: ${definition.tools.join(', ')}\ndisallowedTools: ${definition.disallowedTools.join(', ')}\n---\n${definition.instructions}\n`;
-      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-      if (fs.existsSync(file)) check(fs.readFileSync(file, 'utf8') === text, 'Managed role path conflicts with an existing file');
-      else fs.writeFileSync(file, text, { flag: 'wx', mode: 0o600 });
-      return { file, name: definition.name, cleanup: 'Remove only this unchanged per-run file after completion; never shared user roles' };
-    }
     case '_supervise': await supervise(action, o.claim); return;
     default: return { setup: 'The current chat remains coordinator. Use references/setup.md to create a complete preset; do not infer models or launch paid smoke tests.',
       commands: ['task open --session HOST:ID --task ID --contract FILE [--revision HASH --reason TEXT]', 'task show|report --session HOST:ID --task ID', 'task check --session HOST:ID --task ID --cwd PATH', 'verify CHECKPOINT --check CHECK', 'task accept --session HOST:ID --task ID [--authorization FILE]', 'doctor', 'presets list|audit|show ID', 'presets validate|save --file FILE [--revision HASH]', 'presets copy X1 Y2', 'presets set-default X1',
         'context open [--session HOST:ID] [--preset X1] [--task-only]', 'catalog --session HOST:ID [--role ROLE]',
-        'prepare --session HOST:ID --task ID --agent PROFILE --brief FILE [--cwd WORKTREE] [--capabilities FILE] [--workspace FILE]',
-        'run ID', 'attach ID --host-agent ID [--workspace-id ID]', 'event ID --host-agent ID --dispatch-token TOKEN --event complete --file RESULT --stopped',
-        'dispatch-failed ID --dispatch-token TOKEN --confirmed-not-started --evidence FILE', 'overview --session HOST:ID [--task ID]',
+        'prepare --session HOST:ID --task ID --agent PROFILE --brief FILE [--cwd WORKTREE] [--capabilities FILE]',
+        'run ID', 'overview --session HOST:ID [--task ID]',
         'watch --session HOST:ID [--task ID] [--after CURSOR] [--timeout-ms 60000] [--full]', 'status|result|wait|cancel ID', 'recover ID [--confirmed-not-started --evidence FILE]', 'resume ID --brief FILE'],
       root: home(), note: 'Invoke this script by its installed path. No global dk command is installed.' };
   }

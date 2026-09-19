@@ -3,8 +3,26 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { extractResult } from '../skills/delegate-kit/scripts/adapters.mjs';
 import { rpcTurn, sumUsage } from '../skills/delegate-kit/scripts/rpc.mjs';
+import { runCost, usageSummary } from '../skills/delegate-kit/scripts/usage.mjs';
 
 const schema = { type: 'object' };
+test('billing and shell estimates remain distinct, including subscription zero and unknown values', () => {
+  const run = { executor: { harness: 'claude', transport: 'cli', billing: 'subscription' }, cost_usd: 0 };
+  assert.deepEqual(runCost(run), { amount_usd: 0, kind: 'estimated', source: 'Claude CLI total_cost_usd', billing: 'subscription', billing_source: 'configured' });
+  assert.equal(runCost({ ...run, cost_usd: -1 }).kind, 'unknown');
+  assert.equal(runCost({ executor: { harness: 'codex', transport: 'cli' }, usage: { input: 1000 } }).amount_usd, null);
+  const summary = usageSummary([run, { ...run, cost_usd: 0.25, resume_of: 'first' }, { executor: { harness: 'codex' } },
+    { executor: { harness: 'claude', transport: 'cli', billing: 'api' }, cost_usd: 0.1 },
+    { executor: { billing: 'api' }, cost_usd: 0.2, cost_kind: 'reported', cost_source: 'fixture invoice' }]);
+  assert.equal(summary.attempts, 5);
+  assert.equal(summary.by_billing.subscription.estimated_usd, 0.25);
+  assert.equal(summary.by_billing.subscription.reported_usd, null);
+  assert.equal(summary.by_billing.api.estimated_usd, 0.1);
+  assert.equal(summary.by_billing.api.reported_usd, 0.2);
+  assert.equal(summary.cost_unknown_runs, 1);
+  assert.equal(summary.coverage, 'partial');
+  assert.equal(summary.coordinator.status, 'unavailable');
+});
 const parseSteps = steps => extractResult('opencode', [...steps.map(part => ({ type: 'step_finish', sessionID: 's', part })), { type: 'text', part: { text: '{}' } }].map(JSON.stringify).join('\n'), null, schema);
 // Contract: https://github.com/anomalyco/opencode/blob/v1.18.23/packages/opencode/src/session/processor.ts#L435-L454
 // CLI emission: https://github.com/anomalyco/opencode/blob/v1.18.23/packages/opencode/src/cli/cmd/run.ts#L749-L750
