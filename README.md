@@ -1,13 +1,7 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.png">
-  <img src="assets/logo.png" alt="Delegate Kit" width="180">
-</picture>
-
 # Delegate Kit
 
 Give routine work to economical AI specialists and keep your strongest model focused on decisions that need it. Delegate Kit helps your current assistant choose the right workers, coordinate their work and verify the result — using a team you define in Markdown.
 
-[![CI](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 <img src="assets/workshop.png" alt="A coordinator assigns work to researchers, builders and an independent reviewer." width="880">
@@ -59,6 +53,6 @@ Markdown instructions do not enforce runtime guarantees. Cross-harness model lau
 
 ## Contributing
 
-Run `python3 docs/check_package.py` to check package layout, metadata and local links. CI runs the same check.
+Run `python3 docs/check_package.py` locally to check package layout, metadata and local links.
 
 [MIT](LICENSE). Review practices also draw from [mattpocock/skills](https://github.com/mattpocock/skills) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Artwork was inspired by [ponytail](https://github.com/DietrichGebert/ponytail).
