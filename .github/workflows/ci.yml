@@ -5,44 +5,16 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Bash syntax + shellcheck
-        run: |
-          sudo apt-get install -y -qq shellcheck >/dev/null
-          files="skills/delegate-kit/hooks/*.sh skills/delegate-kit/scripts/agent-wt tests/*.sh"
-          for f in $files; do bash -n "$f"; done
-          shellcheck -S warning $files
-      - name: Node syntax
-        run: |
-          for f in skills/delegate-kit/scripts/*.mjs; do node --check "$f"; done
-      - name: Routing policy
-        run: bash tests/route.sh
-      - name: Safety gate
-        run: bash tests/gate.sh
-      - name: SKILL.md stays a policy, not a manual
-        run: |
-          size=$(wc -c < skills/delegate-kit/SKILL.md)
-          echo "SKILL.md: $size bytes"
-          test "$size" -le 8000
-      - name: Validate packaged schemas and example JSON
-        run: |
-          python3 -m json.tool skills/delegate-kit/assets/result-fields.json >/dev/null
-          python3 -m json.tool skills/delegate-kit/assets/preset.schema.json >/dev/null
-          python3 -m json.tool skills/delegate-kit/examples/config.json >/dev/null
-          node skills/delegate-kit/scripts/dk.mjs presets validate --file skills/delegate-kit/examples/main.json
-      - name: Runtime help from a relocated package
-        run: |
-          stage=$(mktemp -d)
-          cp -R skills/delegate-kit "$stage/installed skill"
-          cd "$stage"
-          node "$stage/installed skill/scripts/dk.mjs" help
+      - name: Check instruction package
+        run: python3 docs/check_package.py
