@@ -5,7 +5,7 @@
 
 # Delegate Kit
 
-One skill for delegating work to your chosen team of AI specialists. Your current assistant coordinates the task, picks suitable workers, and checks the combined result.
+Give routine work to economical AI specialists and keep your strongest model focused on decisions that need it. Delegate Kit helps your current assistant choose the right workers, coordinate their work and verify the result — using a team you define in Markdown.
 
 [![CI](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml/badge.svg)](https://github.com/tomastaker/delegate-kit/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -19,7 +19,7 @@ One skill for delegating work to your chosen team of AI specialists. Your curren
 - **Flexible execution.** Prefer native subagents when they match the profile; otherwise use an available CLI or service. No fixed pipeline or required number of workers.
 - **Checked outcomes.** Workers verify their changes; the coordinator checks integration and arranges independent review of the completed result.
 
-Delegate Kit contains instructions and team files. It has no execution engine, adapters or background service to maintain.
+Define your team once, then use it for research, implementation and review across environments with suitable delegation tools.
 
 ## Install
 
@@ -57,9 +57,7 @@ The skill uses the [Agent Skills format](https://agentskills.io/specification). 
 
 Markdown instructions do not enforce runtime guarantees. Cross-harness model launches have not been validated; see [checks and limitations](docs/verification.md). The local [quality rules](skills/delegate-kit/quality.md) adapt [Quality Policy](https://github.com/tomastaker/quality-policy/blob/e1656ded733d24f1c6d0ef51faf3a560dcb3253d/SKILL.md), with no external skill dependency.
 
-## Upgrading and contributing
-
-This version replaces the previous runtime. Old JSON presets and CLI commands are no longer used. Before removing an old installation, remove its registered hooks through your assistant's configuration. This update leaves user settings, logs and worktrees untouched; old code remains in Git history.
+## Contributing
 
 Run `python3 docs/check_package.py` to check package layout, metadata and local links. CI runs the same check.
 

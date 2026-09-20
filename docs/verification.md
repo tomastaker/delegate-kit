@@ -1,5 +1,7 @@
 # Verification
 
+For an installation with a dangling Delegate Kit shell hook, see the separate [hook cleanup instructions](hook-cleanup.md). This maintenance note is outside the installable skill.
+
 ## Behavioral scenarios
 
 Use a configured team and inspect the actual reads, selected profiles, launches and returned evidence. A confident final report alone is not a trace.

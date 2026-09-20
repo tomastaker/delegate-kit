@@ -23,7 +23,7 @@ assert len(fields["name"]) <= 64
 assert 0 < len(fields["description"]) <= 1024
 assert all(": " not in value and " #" not in value for value in fields.values())
 
-for path in [root / "README.md", *package.glob("*.md"), root / "docs" / "verification.md"]:
+for path in [root / "README.md", *package.glob("*.md"), *(root / "docs").glob("*.md")]:
     body = path.read_text()
     links = re.findall(r"\]\(([^)]+)\)", body)
     links += re.findall(r'(?:src|srcset)="([^"]+)"', body)
