@@ -37,8 +37,32 @@ Launch your own family natively and the other family from the terminal with its 
 
 | Coordinator | Claude model | GPT model |
 | --- | --- | --- |
-| Claude | Native agent tool with the profile's model. If it cannot set the effort, the session effort is accepted. | Terminal: `codex exec -m <model> -c model_reasoning_effort=<level> -s read-only\|workspace-write -C <working copy> -o <result file> "<brief>"`, run in the background. Add `--skip-git-repo-check` outside Git. |
-| GPT | Terminal: `claude -p --model <model> --effort <level> --permission-mode plan\|acceptEdits [--allowedTools <check commands>] "<brief>"`, run in the background. | Native subagent when it can set the profile's model and effort; otherwise the `codex exec` command above. |
+| Claude | Native agent tool with the profile's model. If it cannot set the effort, the session effort is accepted. | Terminal: `codex exec -m <model> -c model_reasoning_effort=<level> -s read-only\|workspace-write -C <working copy> -o "$w/result" -`. Add `--skip-git-repo-check` outside Git. |
+| GPT | Terminal: `claude -p --model <model> --effort <level> --permission-mode plan\|acceptEdits [--allowedTools <check commands>] --output-format stream-json --verbose`. The final text is `jq -r .result` of the last log line. | Native subagent when it can set the profile's model and effort; otherwise the `codex exec` command above. |
+
+### Launching and watching a terminal run
+
+Give each run its own directory. Write the brief to `$w/brief`, then launch detached; `<CLI>` is the command from the table and reads the brief from stdin:
+
+```sh
+w=$(mktemp -d); echo $(( $(date +%s) + <budget seconds> )) > "$w/deadline"
+( <CLI> < "$w/brief"; echo $? > "$w/exit" ) > "$w/log" 2>&1 < /dev/null & echo $! > "$w/pid"
+```
+
+Then wait with this watch command. It checks every 30 seconds inside the shell and ends with one line: `EXITED` (read the result), `STALLED` (no log output for 10 minutes) or `OVER_BUDGET`. A Claude coordinator runs it as a background command and gets one notification. A GPT coordinator runs it in the foreground with a tool timeout above `limit`; `RUNNING` means only the call's limit passed, so run it again.
+
+```sh
+w=<run dir>; limit=3000; end=$(( $(date +%s) + limit ))
+while kill -0 "$(cat "$w/pid")" 2>/dev/null; do
+  sleep 30
+  if [ -n "$(find "$w/log" -mmin +10)" ]; then echo STALLED; exit; fi
+  if [ "$(date +%s)" -ge "$(cat "$w/deadline")" ]; then echo OVER_BUDGET; exit; fi
+  if [ "$(date +%s)" -ge "$end" ]; then echo RUNNING; exit; fi
+done
+echo "EXITED code=$(cat "$w/exit" 2>/dev/null)"
+```
+
+On `STALLED` or `OVER_BUDGET`, read the log tail and the working copy. If the run is still progressing, extend `$w/deadline` or `touch "$w/log"` and watch again; otherwise stop it with `pkill -P <pid>; kill <pid>` and preserve its partial work. Remove the run directory after accepting the result.
 
 - Before the first terminal launch in a session, confirm subscription login: `codex login status` reports ChatGPT, `claude auth status` reports claude.ai, and no `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set. Otherwise stop and report.
 - Read work uses `-s read-only` or `--permission-mode plan`; write work uses `-s workspace-write` or `--permission-mode acceptEdits`. Parallel writers use separate worktrees; launch from the worktree directory.

@@ -30,6 +30,8 @@ If a route or model is unavailable, report the specific limitation and use only 
 
 Keep each agent identifier or CLI result handle so you can retrieve status and output. Use the environment's wait and notification facilities, and continue independent work while waiting. A timeout or lost connection leaves status uncertain: inspect the previous writer and preserve its work before starting an overlapping replacement.
 
+Every running assignment needs exactly one mechanism that will wake you when it ends, stalls or exceeds its time budget; do not rely on remembering to check. Native agents already notify on completion. For a terminal run, use the launch and watch commands in the team file. Waiting must happen in the shell or the environment, not in the model: never poll with repeated short sleeps, short scheduled wake-ups or output-text monitors. Identify a process by its PID, never by searching command lines (`pgrep -f` also matches the command that is searching). A run is finished when its process has exited and its result file is non-empty; if the two signals disagree, inspect instead of waiting longer. Before reporting status, read those signals again rather than repeating an earlier answer.
+
 Parallelize independent assignments with clear edit ownership. Use worktrees or native isolation when useful; sequential work is also valid, including outside Git. Account for shared databases, ports and services that file isolation does not separate. Preserve others' changes and release only your own resources.
 
 ## Collect and accept

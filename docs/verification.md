@@ -22,6 +22,7 @@ Use a configured team and inspect the actual reads, selected profiles, launches 
 | Defect plus optional suggestions | Resolves the defect with evidence and targeted follow-up; avoids a polish loop. |
 | Edit after verification | Refreshes affected evidence, reuses unaffected checks. |
 | Timeout or lost connection | Keeps status uncertain until checked; no blind overlapping writer. |
+| Waiting on a terminal run | One shell-side watch per run, tracked by PID; wakes the coordinator only on exit, a 10-minute silent log or the time budget; no model-side polling. |
 | Existing independent review or strict response contract | Counts equivalent review and preserves native completion format. |
 | Add or replace a specialist | Changes only the selected team file or explicit task override. |
 | Change touching payments, auth or production data | Announces and runs cross-review by both families in parallel. |
