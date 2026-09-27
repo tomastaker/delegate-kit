@@ -1,41 +1,31 @@
-# Quality and acceptance
+# Quality
 
-Apply these requirements at the environment's existing handoff and completion points. The coordinator owns acceptance of the whole task; implementers own their changes and self-checks; an independent reviewer assesses the combined result. Verification depth follows the change and its risks. Equivalent existing checks count, and stricter project requirements remain in force.
+A task is done when its behavior has been observed working, not when the code reads correctly or builds. Models reliably check code by reading it; they less reliably exercise it — run the command, call the API, open the interface. This file closes that gap. Match the depth of checking to the change and its risk; stricter project requirements still apply.
 
-## Before implementation
+## Brief
 
-Establish the intended behavior, edit scope, constraints, invariants and observable acceptance criteria. A few sentences suffice for an obvious change. Resolve consequential ambiguity before dependent work; keep expectations anchored to the request instead of adjusting them to whatever was implemented. Each implementer must know its boundaries and how to demonstrate success.
+Every assignment states the outcome, editable scope, the finish line and how the result will be demonstrated. For an obvious change a sentence each is enough.
 
-## Before handoff
+## Evidence by change type
 
-Verify a coherent finished change, starting with the affected behavior and meaningful consequences. For a bug, reproduce the failure or establish concrete causal evidence. Add a regression test when required by the project or when it can protect the behavior at reasonable maintenance cost. Derive expectations from the requested behavior; justify fixture and snapshot changes on that basis. Keep failures visible rather than weakening checks to pass.
+- Logic or API: run the relevant test, command or request and report the observed output. For a bug, reproduce it first or show the concrete cause.
+- Scripts, CLI, integrations and data changes: run the real path end to end on authorized data and report the observed result.
+- User interface: open the running product in a browser or the app. Follow the user's path through the changed element (open the menu, pick an option, submit the form), confirm the resulting state, and take a screenshot of the affected area. Check the viewport sizes, long content, empty and error states, and keyboard focus that the change could affect.
+- Saved data: reload or reopen and confirm the value persisted.
+- Text and research: check accuracy, sources and completeness; code and UI checks do not apply.
 
-Use project checks and authorized environments. Extend verification when a failure, dependency or concrete risk warrants it. Once required checks pass, proceed; additional checks should resolve a specific question. Unrelated refactoring and a full intermediate audit are not part of ordinary self-checks.
+A build proves it compiles, a screenshot proves appearance, and a click without checking the result proves neither. Add a regression test when it protects real behavior at reasonable cost, not for reversible cosmetic edits.
 
-For visual changes, inspect the actual rendered result. For interaction changes, follow the normal user path, confirm the resulting state, and inspect its appearance. Use the available browser or application tools. A build proves buildability, a screenshot proves appearance, and a successful click alone proves neither the intended behavior nor usability.
+## Report
 
-For example, a dropdown spacing change needs inspection of the open list; a selection change needs opening, choosing and checking the displayed value. A save change also needs reopening to confirm persistence. Check viewport sizes, long content, loading/error states, focus and keyboard behavior when the change puts them at risk. Permanent end-to-end tests are useful when their regression value justifies them, not for every cosmetic edit. Diagnostic shortcuts do not replace evidence that users can complete the action.
+Return what was checked, how, and what was observed, with screenshots for UI. List what was not checked and why. An unchecked item is acceptable; presenting it as checked is not. Keep failures visible instead of weakening checks.
 
-Return the checked revision or working state, scenario or command, observed result and useful artifacts. Distinguish real checks from mocked boundaries, unperformed checks and environment limitations. Support claims of pre-existing failures with evidence. Exclude secrets. Missing mandatory browser access remains a verification gap; a build cannot fill it.
+## Review
 
-An implementer may finish its assignment after returning the result and applicable self-checks, or an explicit blocker. It need not keep its session open through acceptance of the whole task.
+Code changes get one independent review from the other family (see [team.md](team.md)), except trivial, reversible edits such as copy or one-line config. High-risk changes get cross-review: both families in parallel, independently, on the same stable revision.
 
-## After integration
+The reviewer gets the acceptance criteria and the evidence, and does not edit. It reports every finding with severity (blocker, should-fix, optional) and confidence, backed by a scenario, test or clear reasoning. A change without evidence of its behavior, such as a UI change without the user path, is a blocker. Unrelated risks are reported separately.
 
-Account for all assignments and check the combined result against the acceptance criteria, including interactions between changes. The coordinator may assign these checks to someone else. Reuse evidence while the checked behavior and relevant dependencies remain unchanged; a new commit alone does not invalidate it. Refresh affected checks after conflict resolution or subsequent edits that could change their result.
+## Finish
 
-## Independent review
-
-After integration and self-checks, arrange one independent assessment of the stable combined task, including the coordinator's changes. Provide the acceptance criteria, relevant context and verification evidence. Keep the reviewed material stable during assessment. Independence means no authorship of the reviewed change; it does not require another model. Count an equivalent existing review and honor any additional project requirements.
-
-The reviewer returns findings, without editing the change or launching another review chain. Each blocker needs a violated requirement and a supporting scenario, test or clear reasoning. Separate confirmed defects, uncertainties needing a targeted check, optional improvements and unrelated findings. Report serious unrelated risks separately without expanding the task automatically. If independent review is unavailable, report the missing acceptance condition and seek its resolution or an explicit exception; self-review is not independent review.
-
-## Resolve and finish
-
-Group confirmed blockers into a focused correction pass. Fix them or provide evidence that refutes them, then check the affected behavior and consequences. The same independent reviewer can confirm closure, reusing unaffected review results. If a reviewer authors a correction, obtain independent assessment of that correction. Restart the full review only for substantial scope changes or project requirements.
-
-Optional polish does not require another implementation cycle. Repeated failure without new evidence calls for reassessing the approach, not automatic acceptance or an automatic switch to a more expensive model.
-
-Accept when the criteria are met, mandatory checks and independent review apply to the final result, and blockers are resolved or covered by explicit exceptions. Distinguish implementation, verification and acceptance. Report the outcome, evidence, limitations, exceptions and separate findings in the environment's normal format.
-
-For research and text work, verify accuracy, sources and completeness. Apply code and UI checks only when those surfaces are affected; research alone does not trigger implementation or code review.
+Fix confirmed blockers in one focused pass, recheck the affected behavior, and let the same reviewer confirm closure. If the same failure repeats without new evidence, reconsider the approach; move to a more expensive model only after that, and with a notice. The coordinator accepts the task after looking at the evidence itself, including UI screenshots, and reports the result, checks performed, gaps and separate findings.
