@@ -7,7 +7,7 @@ import re
 root = Path(__file__).resolve().parents[1]
 package = root / "skills" / "delegate-kit"
 assert {p.relative_to(package).as_posix() for p in package.rglob("*") if p.is_file()} == {
-    "SKILL.md", "team.md", "team.example.md", "gpt-team.md", "quality.md", "agents/openai.yaml"
+    "SKILL.md", "team.md", "agents/openai.yaml"
 }, "Unexpected files in the instruction and team package"
 assert list((root / "skills").rglob("SKILL.md")) == [package / "SKILL.md"]
 
@@ -16,7 +16,7 @@ header = re.fullmatch(r"---\n(.*?)\n---\n(.+)", text, re.S)
 assert header, "Missing frontmatter or body"
 # This package deliberately uses only single-line plain YAML scalar fields.
 fields = dict(line.split(": ", 1) for line in header[1].splitlines())
-assert set(fields) == {"name", "description", "license", "disable-model-invocation"}
+assert set(fields) == {"name", "description", "license"}
 assert fields["name"] == package.name
 assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", fields["name"])
 assert len(fields["name"]) <= 64

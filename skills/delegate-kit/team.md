@@ -1,69 +1,19 @@
 # Team
 
-Mixed Claude + GPT team. The current chat is the coordinator; it may be Claude Opus 5.5 or a GPT-6 model. User and project instructions take precedence over this file.
+## Family
 
-## How to use the team
+Launch subagents from your own family through the environment's native route. Use the other family when the user asks, when your own family's limits run out (with a notice), or for a second review of a high-risk change.
 
-- Do small, understood work yourself. Delegate when it saves your context or usage limit, when pieces are independent and can run in parallel, or when another model must look at the work.
-- Split work by independent context (a module, a set of files, a question), not by stage. Planning, implementation and review are not a required chain.
-- Brief each specialist with the outcome, editable scope, the finish line, how to demonstrate the result (see [quality.md](quality.md)) and a time budget. Specialists do not delegate further unless the brief says so.
-- Effort never goes above `xhigh`: do not use Claude `max` or GPT `ultra`. Bug fixes in existing code get at least `high`.
+## Tiers
 
-## Choosing the family
+| Tier | Claude | GPT | Use for |
+| --- | --- | --- | --- |
+| light | `claude-haiku-5-5` | `gpt-6-luna` | Search with a clear scope in code, docs, logs or the web, returning a short summary with sources; running tests, builds and linters and reporting the result; mechanical or spec-exact edits that a test or typecheck confirms; extraction and summaries. |
+| strong | `claude-opus-5-5` | `gpt-6.1-sol` | Implementation that needs judgement, debugging, design, code review and the final review of a branch or pull request. |
+| manual only | `claude-fable-5-1` | `gpt-6-astra` | Only when the user names the model. |
 
-Each profile lists a GPT and a Claude option of equal standing.
+Effort: `medium` by default; `high` for bug fixes in existing code, code review, multi-step research and design; `xhigh` for the hardest problems or after a failed attempt.
 
-- By default, give the work to the family other than yours. This spreads usage across both subscriptions and makes the reviewer come from a different family than the author.
-- A reviewer comes from the family that did not write the riskiest part of the change. This overrides every other preference.
-- The user may override the default for a task ("use more Claude", "save GPT").
-- When a model hits a usage limit or is unavailable, switch to the other family's option with a notice.
-- Sonnet and Opus are the same family: a Sonnet author gets a GPT reviewer.
-- Claude Fable 5.1 is used only where listed below, with a notice. Any unlisted model needs the user's approval.
+`claude-sonnet-5-5` at `medium` or `high` may replace `claude-opus-5-5` for spec-exact implementation that is too large or interconnected for the light tier, when the user wants to save Opus usage. It is not used for code review.
 
-## Profiles
-
-| Profile | GPT | Claude | Access | Use for |
-| --- | --- | --- | --- | --- |
-| scout | `gpt-6-luna` · high | `claude-sonnet-5-5` · medium for code, logs and docs; `claude-opus-5-5` · low for facts from the web | read | Lookup in code, docs, logs and web; broad sweeps whose result is a short summary with sources. |
-| implementer | `gpt-6-sol` | `claude-sonnet-5-5`; `claude-opus-5-5` when many connected files change together | write; browser for UI | Bounded implementation: code, scripts, CLI, and improving an existing screen within its design (layout, states, responsiveness, accessibility, UX copy). Effort: low for fully specified edits, medium by default, high for bug fixes in existing code. |
-| implementer-hard | `gpt-6-astra` · low; medium if the brief has open questions or after a failed attempt | `claude-opus-5-5` · high; `claude-fable-5-1` · high after a failed attempt | write | Unclear invariants, costly regressions, work where a normal attempt failed. |
-| ui-designer | `gpt-6-sol` · high, only when Claude is unavailable | `claude-opus-5-5` · high, always preferred | write, browser | New screens, redesigns, visual direction and new interaction flows. |
-| planner | `gpt-6-astra` · medium | `claude-opus-5-5` · high; `claude-fable-5-1` · high for novel, high-stakes, multi-component designs | read | Call when the task spans several components or stages, has consequential design choices, or you are unsure how to decompose it. Returns bounded assignments, each with scope and finish line. Any family; choose the other family when the point is an independent view of your own plan. |
-| reviewer | `gpt-6-sol` · high; `gpt-6-astra` · high in cross-review | `claude-opus-5-5` · high | read, browser for UI | Independent review of a code change. Cross-review runs both families in parallel on the same revision: for payments or money, authentication or permissions, deletion or migration of production data, security boundaries, or when the user asks. Announce cross-review when you start it. |
-
-## Routes
-
-Launch your own family natively and the other family from the terminal with its vendor CLI. Both routes use the user's subscriptions. Do not use plugins, other agents, API keys, third-party providers or model pickers offered by the current interface. If the listed route is unavailable, report it and offer the other family's model; do not substitute a route.
-
-| Coordinator | Claude model | GPT model |
-| --- | --- | --- |
-| Claude | Native agent tool with the profile's model. If it cannot set the effort, the session effort is accepted. | Terminal: `codex exec -m <model> -c model_reasoning_effort=<level> -s read-only\|workspace-write -C <working copy> -o "$w/result" -`. Add `--skip-git-repo-check` outside Git. |
-| GPT | Terminal: `claude -p --model <model> --effort <level> --permission-mode plan\|acceptEdits [--allowedTools <check commands>] --output-format stream-json --verbose`. The final text is `jq -r .result` of the last log line. | Native subagent when it can set the profile's model and effort; otherwise the `codex exec` command above. |
-
-### Launching and watching a terminal run
-
-Give each run its own directory. Write the brief to `$w/brief`, then launch detached; `<CLI>` is the command from the table and reads the brief from stdin:
-
-```sh
-w=$(mktemp -d); echo $(( $(date +%s) + <budget seconds> )) > "$w/deadline"
-( <CLI> < "$w/brief"; echo $? > "$w/exit" ) > "$w/log" 2>&1 < /dev/null & echo $! > "$w/pid"
-```
-
-Then wait with this watch command. It checks every 30 seconds inside the shell and ends with one line: `EXITED` (read the result), `STALLED` (no log output for 10 minutes) or `OVER_BUDGET`. A Claude coordinator runs it as a background command and gets one notification. A GPT coordinator runs it in the foreground with a tool timeout above `limit`; `RUNNING` means only the call's limit passed, so run it again.
-
-```sh
-w=<run dir>; limit=3000; end=$(( $(date +%s) + limit ))
-while kill -0 "$(cat "$w/pid")" 2>/dev/null; do
-  sleep 30
-  if [ -n "$(find "$w/log" -mmin +10)" ]; then echo STALLED; exit; fi
-  if [ "$(date +%s)" -ge "$(cat "$w/deadline")" ]; then echo OVER_BUDGET; exit; fi
-  if [ "$(date +%s)" -ge "$end" ]; then echo RUNNING; exit; fi
-done
-echo "EXITED code=$(cat "$w/exit" 2>/dev/null)"
-```
-
-On `STALLED` or `OVER_BUDGET`, read the log tail and the working copy. If the run is still progressing, extend `$w/deadline` or `touch "$w/log"` and watch again; otherwise stop it with `pkill -P <pid>; kill <pid>` and preserve its partial work. Remove the run directory after accepting the result.
-
-- Before the first terminal launch in a session, confirm subscription login: `codex login status` reports ChatGPT, `claude auth status` reports claude.ai, and no `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set. Otherwise stop and report.
-- Read work uses `-s read-only` or `--permission-mode plan`; write work uses `-s workspace-write` or `--permission-mode acceptEdits`. Parallel writers use separate worktrees; launch from the worktree directory.
-- Full-access and bypass modes need the user's approval.
+Other models, including earlier generations, run only when the user asks.
