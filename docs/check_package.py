@@ -7,7 +7,7 @@ import re
 root = Path(__file__).resolve().parents[1]
 package = root / "skills" / "delegate-kit"
 assert {p.relative_to(package).as_posix() for p in package.rglob("*") if p.is_file()} == {
-    "SKILL.md", "team.md", "team.example.md", "gpt-team.md", "quality.md"
+    "SKILL.md", "team.md", "agents/openai.yaml"
 }, "Unexpected files in the instruction and team package"
 assert list((root / "skills").rglob("SKILL.md")) == [package / "SKILL.md"]
 

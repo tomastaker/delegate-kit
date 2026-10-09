@@ -1,6 +1,6 @@
 # Delegate Kit
 
-Give routine work to economical AI specialists and keep your strongest model focused on decisions that need it. Delegate Kit helps your current assistant choose the right workers, coordinate their work and verify the result — using a team you define in Markdown.
+Keep your strongest model as the coordinator and give the rest of the work to subagents on the cheapest model that does it well. Delegate Kit is a short orchestration policy for your current assistant: when to do work itself, when to split it across parallel subagents, which model tier each assignment needs, and how to accept the combined result.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -8,12 +8,11 @@ Give routine work to economical AI specialists and keep your strongest model foc
 
 ## Why use it?
 
-- **Your team, your models.** Define specialists for research, planning, implementation and review in Markdown.
-- **Economical delegation.** Assign straightforward work to suitable lower-cost profiles, even within a complex project. Stronger models handle work that needs them.
-- **Flexible execution.** Prefer native subagents when they match the profile; otherwise use an available CLI or service. No fixed pipeline or required number of workers.
-- **Checked outcomes.** Workers verify their changes; the coordinator checks integration and arranges independent review of the completed result.
-
-Define your team once, then use it for research, implementation and review across environments with suitable delegation tools.
+- **Balanced cost.** The skill aims between two extremes: one overloaded agent that works for hours until its context compacts, and a swarm of dozens of agents that multiplies cost. Light models take scoped search, log reading, test runs and spec-exact edits; strong models take implementation, debugging and review. The most expensive models run only when you name them.
+- **Right-sized work.** Small and sequential work stays with the coordinator. Large tasks are split before launch into assignments that finish without context compaction, run in parallel when independent (up to six at a time by default), and use separate branches or worktrees when their files overlap.
+- **Explicit models.** Every launch sets the model and effort, because native subagent tools otherwise inherit the coordinator's model.
+- **Any harness, any family.** The skill states what a launch must control, not a fixed command. It uses what your environment offers: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback. The coordinator can be Claude or GPT.
+- **Checked outcomes.** Workers check their own work by your and your project's rules and return evidence; the coordinator accepts on that evidence. Large features, branches and pull requests also get an independent review by a strong model that did not write the code.
 
 ## Install
 
@@ -23,33 +22,37 @@ Use the [Skills CLI](https://github.com/vercel-labs/skills), or copy `skills/del
 npx skills add tomastaker/delegate-kit
 ```
 
-The skill needs no runtime of its own. Executors and their authorization must already be available in your environment.
-
-## Choose your team
-
-| File | Purpose |
-| --- | --- |
-| [team.md](skills/delegate-kit/team.md) | Empty default team for your profiles. |
-| [team.example.md](skills/delegate-kit/team.example.md) | Generic template to copy and adapt. |
-| [gpt-team.md](skills/delegate-kit/gpt-team.md) | Eight Codex profiles using GPT-5.6 Luna, GPT-5.6 Sol and GPT-6 Astra, with reasoning and access preferences. |
-
-Each profile describes when to use it, its executor and its model. Add reasoning, access preferences or launch instructions when needed; a fixed launch command is optional. Only the selected team is loaded.
-
-Keep a personal team file outside the installed skill to preserve settings across updates. Name its path in your request or standing instructions. You can also ask the assistant to help configure it. Model availability and access modes depend on the execution environment.
+The skill needs no runtime of its own. The models and tools it launches, and their authorization, must already be available in your environment.
 
 ## Use
 
-> Use Delegate Kit with its bundled gpt-team.md. Investigate this bug, implement the fix and verify the result.
+The assistant loads the skill on its own when a task splits into independent parts, needs reading many files or sources, is too large for one session, or needs an independent review of a large change. When those criteria hold, it delegates without asking; installing the skill is your standing consent for that. You can also ask directly:
 
-For your own team, replace `its bundled gpt-team.md` with `my team at /absolute/path/to/team.md`. Without a selection, the skill reads the default `team.md`.
+> Use Delegate Kit. Implement the export feature from the spec and verify it.
 
-The current assistant remains the coordinator. It chooses useful assignments, runs independent work in parallel when appropriate, and collects the results. Research and planning are optional; small tasks can stay in the current chat. Review corrections focus on confirmed defects.
+Change the defaults for one task in the request, for example "use GPT for the small work" or "skip the independent review".
+
+Subagents never orchestrate on their own: a worker delegates only when its brief grants it, with a limit.
+
+## Your team
+
+[team.md](skills/delegate-kit/team.md) holds the model tiers:
+
+| Tier | Claude | GPT |
+| --- | --- | --- |
+| light | Haiku 5.5 | GPT-6 Luna |
+| strong | Opus 5.5 | GPT-6.1 Sol |
+| manual only | Fable 5.1 | GPT-6 Astra |
+
+Effort stays at `medium`, `high` or `xhigh`; `max` and `ultra` run only on request. By default, subagents come from the coordinator's own family through the native route; the other family is used when you ask, when your own limits run out, or for a second review of a high-risk change. Launches use your existing logins; a route that bills an API key or another account needs your approval.
+
+To keep personal settings across updates, keep your own team file outside the installed skill and name its path in your request or standing instructions; it replaces the bundled one.
 
 ## Portability
 
-The skill uses the [Agent Skills format](https://agentskills.io/specification). Use it in an environment that can read the files and launch the selected specialists. The harness's tools determine available routes, regardless of the coordinator's model family. Unavailable models are reported rather than silently substituted.
+The skill uses the [Agent Skills format](https://agentskills.io/specification); Codex reads its invocation policy from `agents/openai.yaml`. Available routes depend on the harness's tools, not on the coordinator's model. Unavailable models are reported rather than silently substituted.
 
-Markdown instructions do not enforce runtime guarantees. Cross-harness model launches have not been validated; see [checks and limitations](docs/verification.md). The local [quality rules](skills/delegate-kit/quality.md) adapt [Quality Policy](https://github.com/tomastaker/quality-policy/blob/e1656ded733d24f1c6d0ef51faf3a560dcb3253d/SKILL.md), with no external skill dependency.
+Markdown instructions do not enforce runtime guarantees. See [checks and limitations](docs/verification.md) for the model comparison and live runs behind the defaults, and for what is not yet verified.
 
 ## Contributing
 
