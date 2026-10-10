@@ -9,7 +9,7 @@ Keep your strongest model as the coordinator and give the rest of the work to su
 ## Why use it?
 
 - **Balanced cost.** The skill aims between two extremes: one overloaded agent that works for hours until its context compacts, and a swarm of dozens of agents that multiplies cost. Light models take scoped search, log reading, test runs and spec-exact edits; strong models take implementation, debugging and review. The most expensive models run only when you name them.
-- **Right-sized work.** Small and sequential work stays with the coordinator. Large tasks are split before launch into assignments that finish without context compaction, run in parallel when independent (up to six at a time by default), and use separate branches or worktrees when their files overlap.
+- **Right-sized, parallel work.** Small work and short dependent chains stay with the coordinator. Larger tasks are split before launch into assignments that finish without context compaction, each noting what must finish before it can start. Everything unblocked runs in parallel (up to six at a time by default), and when an assignment finishes, the work it unblocks starts at once. Shared pieces such as an API contract are settled first; overlapping writers get separate branches or worktrees. The split aims at the best return, not at the most agents.
 - **Explicit models.** Every launch sets the model and effort, because native subagent tools otherwise inherit the coordinator's model.
 - **Any harness, any family.** The skill states what a launch must control, not a fixed command. It uses what your environment offers: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback. The coordinator can be Claude or GPT.
 - **Checked outcomes.** Workers check their own work by your and your project's rules and return evidence; the coordinator accepts on that evidence. Large features, branches and pull requests also get an independent review by a strong model that did not write the code.
@@ -58,4 +58,4 @@ Markdown instructions do not enforce runtime guarantees. See [checks and limitat
 
 Run `python3 docs/check_package.py` locally to check package layout, metadata and local links.
 
-[MIT](LICENSE). Review practices also draw from [mattpocock/skills](https://github.com/mattpocock/skills) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Artwork was inspired by [ponytail](https://github.com/DietrichGebert/ponytail).
+[MIT](LICENSE). Review and task-splitting practices also draw from [mattpocock/skills](https://github.com/mattpocock/skills) and [addyosmani/agent-skills](https://github.com/addyosmani/agent-skills). Artwork was inspired by [ponytail](https://github.com/DietrichGebert/ponytail).

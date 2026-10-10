@@ -16,15 +16,19 @@ Spend where it buys speed or quality; save where saving costs nothing. One extre
 
 ## Do it or delegate
 
-Do it yourself when the round trip costs more than the work: small understood edits, changes in one or two files, sequential steps that each depend on the last, and decisions that need judgement or the user. A brief, a launch and an acceptance check cost real coordinator tokens, so a part is worth delegating only when it takes more work than that.
+Do it yourself when the round trip costs more than the work: small understood edits, changes in one or two files, a short chain of steps that each depend on the last, and decisions that need judgement or the user. A brief, a launch and an acceptance check cost real coordinator tokens, so a part is worth delegating only when it takes more work than that.
 
-Delegate when the task has three or more independent parts of real size, gathering context means reading about ten or more files or long logs, docs or web sources, checks run for a long time, edits are bulk and mechanical, or the result needs an independent review. When these criteria hold, delegate without asking: this skill is the user's standing consent for that work.
+Delegate when the task has three or more independent parts of real size (or two large ones), gathering context means reading about ten or more files or long logs, docs or web sources, checks run for a long time, edits are bulk and mechanical, or the result needs an independent review. When these criteria hold, delegate without asking: this skill is the user's standing consent for that work.
 
-## Size each assignment
+## Plan the work
 
-An assignment should finish in one focused session, well within the worker's context window: roughly under an hour and about half the window. Split anything larger, or anything spanning independent areas, before launch: API, UI and migrations are three assignments, not one. Writers whose files overlap get separate branches or worktrees; you integrate the results. A worktree starts from a commit, not from your working tree: commit or pass along the uncommitted changes the worker needs.
+Split the task into assignments before launch. Each should finish in one focused session, well within the worker's context window: roughly under an hour and about half the window. Cut where the parts touch least and so that each can be checked on its own: a slice of behaviour through the layers it needs is usually easier to verify than one layer alone. Split what is too large and leave small parts whole.
 
-Run up to six agents at a time; go beyond that only for a stated reason. A large feature in one branch can get a sub-coordinator: grant it in the brief, with a limit ("you may launch up to three workers").
+Note for each assignment what must finish before it can start. Launch everything with no unfinished blockers together, in the background: elapsed time is then set by the longest chain, not by the sum. When an assignment finishes, accept it, integrate what later work builds on, and launch whatever it unblocks without waiting for the rest of the batch. When several parts depend on something shared (an API contract, a schema, shared types), settle that piece first, yourself or as one assignment, and put it in every brief. Research that the plan depends on goes out first, while you start the work that does not wait for its answers.
+
+Split for the best return, not for the most agents: another parallel assignment is worth it while it clearly shortens the whole job, and stops being worth it when its brief, acceptance and integration cost about as much as the time it saves. Run up to six agents at a time; go beyond that only for a stated reason.
+
+Writers whose files overlap get separate branches or worktrees; you integrate the results. A worktree starts from a commit, not from your working tree: commit or pass along the uncommitted changes the worker needs. A large feature in one branch can get a sub-coordinator: grant it in the brief, with a limit ("you may launch up to three workers").
 
 ## Choose the model
 
