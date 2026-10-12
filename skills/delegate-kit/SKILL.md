@@ -1,57 +1,55 @@
 ---
 name: delegate-kit
-description: Coordinate work through subagents on economical models. Use when a task splits into independent parts, needs reading many files or sources, is too large for one session, or needs an independent review of a large change; or when the user asks to delegate or change the team.
+description: Rules for coordinating subagents on work too large for one agent - sizing, launch, briefs, review, fix rounds, model and effort per launch. Use when you are about to launch a subagent, or when the user asks to delegate or change the team.
 license: MIT
 ---
 
 # Delegate Kit
 
-You are the coordinator: you keep the conversation, the decisions and acceptance. [team.md](team.md) lists the model tiers and the family preference; read it on activation. A team file named by the user or their standing instructions replaces it. User and project instructions take precedence over this skill and the team file.
+You are the coordinator: you keep the conversation, the decisions and acceptance. [team.md](team.md) names the model and effort for each kind of work; read it before the first launch. A team file named by the user replaces it. User and project instructions take precedence over this skill.
 
-If your task is a coordinator's brief, you are a worker: do the assignment yourself, and delegate only within the limit the brief grants.
+If your task is a coordinator's brief, you are a worker: do the assignment yourself.
 
-## Balance
+## Solo first
 
-Spend where it buys speed or quality; save where saving costs nothing. One extreme is a single agent grinding through a large task for hours until its context compacts and loses detail. The other is a swarm of dozens of agents that duplicate work, multiply cost and leave a merge mess. Aim between them: a few well-sized assignments, each on the cheapest tier that does it well.
+Size the whole task before anything else. If you alone would finish it in one context, up to about an hour of work or about three thousand changed lines, do it yourself and launch no implementers: at that size delegation was measured to cost about 40% more tokens for little or no time saved. Delegate implementation only for work beyond that. An independent review of a large or risky change is worth its cost at any size.
 
-## Do it or delegate
+## Size
 
-Do it yourself when the round trip costs more than the work: small understood edits, changes in one or two files, a short chain of steps that each depend on the last, and decisions that need judgement or the user. A brief, a launch and an acceptance check cost real coordinator tokens, so a part is worth delegating only when it takes more work than that.
+One assignment is a piece a single agent finishes in one context: up to about an hour of work or a couple of thousand changed lines. Keep smaller parts together in one assignment; cut larger work where the parts touch least, so each can be checked on its own. Settle what several parts share (an API contract, a schema, shared types) first and put it in every brief.
 
-Delegate when the task has three or more independent parts of real size (or two large ones), gathering context means reading about ten or more files or long logs, docs or web sources, checks run for a long time, edits are bulk and mechanical, or the result needs an independent review. When these criteria hold, delegate without asking: this skill is the user's standing consent for that work.
-
-## Plan the work
-
-Split the task into assignments before launch. Each should finish in one focused session, well within the worker's context window: roughly under an hour and about half the window. Cut where the parts touch least and so that each can be checked on its own: a slice of behaviour through the layers it needs is usually easier to verify than one layer alone. Split what is too large and leave small parts whole.
-
-Note for each assignment what must finish before it can start. Launch everything with no unfinished blockers together, in the background: elapsed time is then set by the longest chain, not by the sum. When an assignment finishes, accept it, integrate what later work builds on, and launch whatever it unblocks without waiting for the rest of the batch. When several parts depend on something shared (an API contract, a schema, shared types), settle that piece first, yourself or as one assignment, and put it in every brief. Research that the plan depends on goes out first, while you start the work that does not wait for its answers.
-
-Split for the best return, not for the most agents: another parallel assignment is worth it while it clearly shortens the whole job, and stops being worth it when its brief, acceptance and integration cost about as much as the time it saves. Run up to six agents at a time; go beyond that only for a stated reason.
-
-Writers whose files overlap get separate branches or worktrees; you integrate the results. A worktree starts from a commit, not from your working tree: commit or pass along the uncommitted changes the worker needs. A large feature in one branch can get a sub-coordinator: grant it in the brief, with a limit ("you may launch up to three workers").
-
-## Choose the model
-
-Pick the tier for the assignment, not for the whole project: a hard project still contains light work. Set the model and effort explicitly on every launch, because native subagent tools inherit your model when you omit them. Use the effort levels listed in the team file; `max`, `ultra` and the manual-only models run only when the user names them.
-
-Light models are safe where a deterministic check (tests, typecheck, build, lint) catches their mistakes. Where a mistake is a silent omission (an open-ended search, fact-checking), give a tight scope or the strong tier. Code review always runs on the strong tier.
+Launch every assignment with no unfinished blockers at once, in the background. Writers whose files overlap get separate branches or worktrees; you integrate. A worktree starts from a commit: commit or pass along what the worker needs.
 
 ## Launch
 
-Prefer the environment's own orchestration: native subagents, or an app orchestrator such as T3 Code's `delegate_task`. Set the model, effort and access it supports, and provide what it lacks yourself, for example by creating the worktree first and pointing the worker at it. Use the other family's vendor CLI (`codex exec`, `claude -p`) only when that orchestration cannot run the needed model. On launch mechanics, the environment's instructions win over this skill. Check the route on the host that will run it.
+Set the model and effort from the team file on every launch: native subagent tools inherit yours when you omit them.
 
-Use the user's existing logins; a route that bills another account or an API key needs approval. If a route or model is unavailable, say which and why, then use an alternative the team file allows, with a notice, or ask. Grant the least access the assignment needs; full-access and bypass modes need the user's approval. Wait through the environment's completion notifications and continue independent work meanwhile. After a timeout or lost connection the status is unknown: inspect the previous writer's work before starting an overlapping replacement.
+Every assignment goes to a fresh agent: a fix round, the next stage and a re-review each get a new agent with a short brief. Each request re-reads the agent's whole context, so an agent kept alive through rounds costs about three times a fresh one. Continue a finished agent only for a short question about its own report.
+
+Prefer the environment's own orchestration; use the other family's CLI only when it cannot run the needed model. Use the user's existing logins and the least access the assignment needs; bypass modes and other accounts need the user's approval. After a timeout or lost connection, inspect the previous writer's work before starting a replacement.
 
 ## Brief
 
-The brief carries everything the worker needs: that it is a delegated assignment, the outcome, the files it may change, the context it needs, constraints, the finish line with the evidence to return, and whether it may delegate. For example:
+The brief carries everything the worker needs: that it is a delegated assignment, the outcome, the branch and files it may change, the context, constraints, the checks to run and the evidence to return. Ask for a short report: result, checks, open questions. For example:
 
-> Delegated assignment. Add retry with exponential backoff to `src/http/client.ts`; change only that file and its test. Retry 429 and 5xx up to 3 times; never retry POST. Done when `pnpm test http` passes: return a short summary and the test output. Do not delegate.
+> Delegated assignment. Add retry with exponential backoff to `src/http/client.ts`; change only that file and its test. Retry 429 and 5xx up to 3 times; never retry POST. Run `pnpm test http`. Report in a few lines: what changed, the test output, open questions.
 
-## Accept
+The full test suite runs twice per change: once by the implementer before handing over and once by you on the merged result. Everyone else runs the tests of the files they touch.
 
-Workers check their own work by the user's and project's rules; the brief only says which evidence to return. Accept on that evidence, not on a confident "done", and check how the pieces fit together.
+## Review
 
-Large features, branches, pull requests and risky changes also get an independent review: a strong-tier model that did not write the code reviews the stable result read-only and reports findings with severity and a failure scenario. The review adds to the authors' self-checks; it does not replace them. Fix confirmed blockers, recheck the affected behavior and let the reviewer confirm. When the same failure repeats without new evidence, rethink the approach before moving to a stronger model.
+A large or risky change gets an independent review by an agent that did not write it. Findings follow the risk list in the brief, so write it with care. The review brief names:
 
-In the report, name the model and effort that actually ran for each assignment.
+- what the change must do, with the author's claims marked as claims to verify;
+- the risks, each with a concrete check: the scenarios that lose data, break the main flow or leak secrets, hostile input for every parser and regular expression, migrations on data shaped like production;
+- what the author already verified, so the reviewer spends nothing on it.
+
+The reviewer reads the diff, confirms findings with targeted runs and short scripts, and reports each finding as a scenario: state, wrong result, how it was confirmed. Lint, typecheck and test suites stay with the author.
+
+You assign severity; reviewers under-rate it. Blocking means data loss, a security defect, a broken main scenario, a regression, a crash or a hang; in doubt, blocking. A fresh agent fixes blocking findings before merge. The rest go into one follow-up list, fixed in one pass.
+
+A fix round writes new code. When it adds logic or touches security, data or migrations, a fresh reviewer checks its diff, scoped to that diff. Small fixes you accept by reading the diff.
+
+## Report
+
+Name the model and effort that ran for each assignment.
