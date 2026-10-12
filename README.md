@@ -12,7 +12,7 @@ Do the work in one agent while it fits one context, and coordinate subagents by 
 - **Right-sized, parallel work.** Larger tasks are split where the parts touch least, into assignments that one agent finishes in one context. Shared pieces such as an API contract are settled first, everything unblocked launches at once in the background, and overlapping writers get separate branches or worktrees.
 - **Explicit models, fresh agents.** Every launch sets the model and effort, because native subagent tools otherwise inherit the coordinator's. Every assignment, fix round and re-review goes to a fresh agent with a short brief: an agent kept alive through rounds re-reads its whole context on each request and costs about three times more.
 - **Reviews that find the costly defects.** A large or risky change gets an independent review by an agent that did not write it. The review brief names the risks with a concrete check for each. The coordinator assigns severity: blocking findings are fixed before merge, the rest go into one follow-up list.
-- **Any harness, any family.** The skill states what a launch must control, not a fixed command. It uses what your environment offers: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback. The coordinator can be Claude or GPT.
+- **Any harness.** The skill states what a launch must control, not a fixed command. It uses what your environment offers: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback.
 
 ## Install
 
@@ -30,7 +30,7 @@ The assistant loads the skill on its own when it is about to launch a subagent; 
 
 > Use Delegate Kit. Implement the export feature from the spec and verify it.
 
-Change the defaults for one task in the request, for example "use GPT for the small work" or "skip the independent review".
+Change the defaults for one task in the request, for example "use Sonnet for the implementation" or "skip the independent review".
 
 A subagent that receives a coordinator's brief does the assignment itself.
 
@@ -42,14 +42,14 @@ Assistants that do not match skills by description can be pointed to the skill w
 
 [team.md](skills/delegate-kit/team.md) names the model for each kind of work:
 
-| Work | Claude | GPT |
-| --- | --- | --- |
-| Implementation that needs judgement, debugging, design, code review | Opus 5.5 | GPT-6.1 Sol |
-| Fix round by an exact list of findings | Sonnet 5.5 | GPT-6.1 Sol |
-| Scoped search, running checks, mechanical edits a test confirms | Haiku 5.5 | GPT-6 Luna |
-| Only when you name the model | Fable 5.1 | GPT-6 Astra |
+| Work | Model |
+| --- | --- |
+| Implementation that needs judgement, debugging, design, code review | Opus 5.5 |
+| Fix round by an exact list of findings | Sonnet 5.5 |
+| Scoped search, running checks, mechanical edits a test confirms | Haiku 5.5 |
+| Only when you name the model | Fable 5.1 |
 
-Effort is `medium` for every launch and goes up one level after a failed attempt or when you ask. By default, subagents come from the coordinator's own family through the native route; the other family is used when you ask, when your own limits run out, or for a second review of a high-risk change. Launches use your existing logins; a route that bills an API key or another account needs your approval.
+Effort is `medium` for every launch and goes up one level after a failed attempt or when you ask. The table lists Claude models only for now; a model of another family, such as GPT, runs when you name it. Launches use your existing logins; a route that bills an API key or another account needs your approval.
 
 To keep personal settings across updates, keep your own team file outside the installed skill and name its path in your request or standing instructions; it replaces the bundled one.
 

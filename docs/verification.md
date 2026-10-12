@@ -11,16 +11,16 @@ Inspect the actual tool trace (skill loads, launches with their model and effort
 | Task that fits one context (up to about an hour or three thousand changed lines) | Coordinator does it itself; the skill does not load; no implementers. |
 | Task beyond one context, without naming the skill | Skill loads before the first launch; the work is split into assignments of one context each. |
 | Task with a shared piece and dependent parts | Shared piece settled first and passed in every brief; unblocked assignments launched together in the background; overlapping writers in separate branches or worktrees. |
-| Any launch | Model from the team file and effort `medium`, both set explicitly; Fable and Astra only when the user names them. |
+| Any launch | Model from the team file and effort `medium`, both set explicitly; Fable only when the user names it. |
 | Fix round, next stage, re-review | A fresh agent with a short brief; a finished agent is continued only for a short question about its own report. |
 | Review of a large or risky change | An agent that did not write the code. The brief lists what the change must do, the author's claims as claims to verify, the risks with a concrete check each, and what is already verified. Findings come back as scenarios. |
 | Review findings | The coordinator assigns severity; a fresh agent fixes blocking findings before merge; the rest go into one follow-up list. |
 | Fix round that adds logic or touches security, data or migrations | A fresh reviewer checks that diff only. |
 | Full test suite | Twice per change: the implementer before handing over, the coordinator on the merged result. |
-| Light work (scoped search, running checks, mechanical edit a test confirms) | Haiku or Luna, not the coordinator's model. |
+| Light work (scoped search, running checks, mechanical edit a test confirms) | Haiku, not the coordinator's model. |
 | Worker sees the skill | Does its assignment itself. |
 | Harness with its own orchestrator (T3 Code) | Uses that orchestrator's delegation tools; no conflicting CLI route. |
-| Other family requested or own limits exhausted | Uses the other family's model with a notice; reports an unavailable route instead of substituting silently. |
+| Model of another family named by the user | Runs that model; reports an unavailable route instead of substituting silently. |
 | Timeout or lost connection | Status stays unknown until the previous writer's work is inspected. |
 
 ## Validation record — 2026-10-09
@@ -69,6 +69,7 @@ Change: the skill now starts with "Solo first"; every assignment goes to a fresh
 - Blind comparison of the three large-task patches by an Opus 5.5 judge with read-only access: solo had 0 blocking, 6 should-fix and 7 minor findings; variant B 0, 0 and 4; variant A 0, 1 and 6.
 - Replay of two stages of the overnight work with the skill and variant B (Opus 5.5 coordinator, `claude -p`): 103 min and 13.4M units against 2 h 25 min and about 32M for the same stages overnight. The skill loaded as the first action. All 12 launches carried an explicit model and `medium` effort: Opus 5.5 for implementation and review, Sonnet 5.5 for fix rounds. There was one review per stage with 11 named risks; it found a search query that blocked the server for 8–25 s and a migration that crashed on irregular stored data. The coordinator assigned severity, and every fix round and re-review went to a fresh agent. The merged result passed lint, typecheck and unit tests; the end-to-end suite passed apart from four tests that also fail on the untouched base and one test that is unstable under parallel load on both.
 - Limitations: one run per cell, so the cost gap between variants A and B on the large task may be run-to-run spread. The replay ended one step early: in headless mode the process exits when the last subagent ends its turn waiting for its own background command, so the final merge of one test fix and the coordinator's report are missing. The replay's result was not compared blind with the overnight result.
-- Not verified: the Haiku and Luna row of the team file in a coordinator run; GPT-side launches and the pointer line on assistants other than Claude Code; solo implementation followed by one independent review on the large task; everything listed as not verified in the earlier records.
+- GPT models were removed from the team file for now: the names it listed were not offered by the Codex catalog on that day, and GPT launches are not in use.
+- Not verified: the Haiku row of the team file in a coordinator run; GPT-side launches and the pointer line on assistants other than Claude Code; solo implementation followed by one independent review on the large task; everything listed as not verified in the earlier records.
 
 Run `python3 docs/check_package.py` from any directory. It checks the package files, the single discoverable entry point, the simple frontmatter and relative links. It does not prove that a model follows the instructions.
