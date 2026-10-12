@@ -2,18 +2,18 @@
 
 ## Family
 
-Launch subagents from your own family through the environment's native route. Use the other family when the user asks, when your own family's limits run out (with a notice), or for a second review of a high-risk change.
+Launch subagents through the environment's native route. A model of another family runs only when the user names it.
 
-## Tiers
+## Models
 
-| Tier | Claude | GPT | Use for |
-| --- | --- | --- | --- |
-| light | `claude-haiku-5-5` | `gpt-6-luna` | Search with a clear scope in code, docs, logs or the web, returning a short summary with sources; running tests, builds and linters and reporting the result; mechanical or spec-exact edits that a test or typecheck confirms; extraction and summaries. |
-| strong | `claude-opus-5-5` | `gpt-6.1-sol` | Implementation that needs judgement, debugging, design, code review and the final review of a branch or pull request. |
-| manual only | `claude-fable-5-1` | `gpt-6-astra` | Only when the user names the model. |
+| Work | Model |
+| --- | --- |
+| Implementation that needs judgement, debugging, design | `claude-opus-5-5` |
+| Code review, including the review of a fix round | `claude-opus-5-5` |
+| Fix round where every finding names the file, the scenario and the fix | `claude-sonnet-5-5` |
+| Search with a clear scope, running checks and reporting the result, mechanical edits a test confirms | `claude-haiku-5-5` |
+| Only when the user names the model | `claude-fable-5-1` |
 
-Effort: `medium` by default; `high` for bug fixes in existing code, code review, multi-step research and design; `xhigh` for the hardest problems or after a failed attempt.
-
-`claude-sonnet-5-5` at `medium` or `high` may replace `claude-opus-5-5` for spec-exact implementation that is too large or interconnected for the light tier, when the user wants to save Opus usage. It is not used for code review.
+Effort: `medium` for every launch. Raise it one level after a failed attempt or when the user asks.
 
 Other models, including earlier generations, run only when the user asks.
