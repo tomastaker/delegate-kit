@@ -22,7 +22,11 @@ Inspect the actual tool trace (skill loads, launches with their model and effort
 | Full test suite | Workers run the tests of their files; the coordinator runs the full suite on each wave's integrated result. |
 | Coordinator context | Ledger updated per accepted assignment; no polling or transcript reading; handoff and an offer of a fresh thread after every second wave or a compaction. |
 | Worker sees the skill | Does its assignment itself and launches no agents. |
-| Harness with its own orchestrator (T3 Code) | Uses that orchestrator's delegation tools; no conflicting CLI route. |
+| Harness with its own orchestrator (T3 Code) | `orchestrator_capabilities` once (with `search` for a team model it omits); GPT, background and worktree launches through `delegate_task` with model and the provider's effort key; `taskId` in the ledger; no polling; no conflicting CLI route. |
+| Plan larger than one budget, or touching money, security, data model, migrations or architecture | One second-family reviewer before the first launch, given the task, the plan and the repository, not the coordinator's reasoning; every finding checked against the code and marked accepted, declined with evidence or a user decision; at most two rounds. Smaller plans: no plan review. |
+| Risky change or a wave's integrated diff | A Claude reviewer and a second-family reviewer launched together with the same read-only brief, blind to each other; verdict plus findings as scenarios, no scores; stop on approval with no blocking finding open or a round of follow-ups only; three rounds, five for security, money or data with an open blocking finding. |
+| Choice with one plainly right answer, or a reviewer dispute settled by a run | A ruling in the ledger with its cost if wrong; no question to the user. Behaviour, business rules, data model, stack or architecture, money, security, irreversible steps and scope go to the user with a recommendation. |
+| Work ends in a pull request | A review record in the description: rounds, and per reviewer the model, verdict per round and confirmed blocking findings. |
 | Model of another family named by the user | Runs that model; reports an unavailable route instead of substituting silently. |
 | Timeout or lost connection | Status stays unknown until the previous writer's work is inspected. |
 
@@ -104,5 +108,16 @@ Change: the skill now sizes work by a context budget of about 200K tokens, choos
 - Fixes after these runs: absolute paths for ignored and uncommitted files in worktree briefs; items far under budget merged along a blocker chain; hostile-input checks limited to input from users and outside systems, with crashes on operator data as follow-up items; one re-review per findings list. Not re-run after these fixes.
 - Background research and the local transcript analysis behind the budget are summarized in the task file of this change.
 
+
+## Validation record — 2026-11-18
+
+Change: a second model family reviews large or risky plans before work starts and risky diffs next to the Claude reviewer; review rounds stop on verdicts and confirmed findings within a budget; a Rulings section separates the coordinator's decisions from questions to the user; a T3 Code section names the launch route; review briefs are read-only and worker-only items left the review brief. Five PR skills from t3dotgg/tstack ship with the package, with `full-send` taking its review from this skill.
+
+- Package check: `python3 docs/check_package.py` and `git diff --check` passed.
+- T3 Code route, live: from an Opus 5.5 thread, `delegate_task` with `target: {providerInstanceId: "codex", model: "gpt-6-luna", options: {reasoningEffort: "high"}}`, `role: "review"`, `mode: "async"` ran a read-only review of this skill against tstack. The completion woke the parent; `task_status` reported `executedModel: gpt-6-luna`. This is the first verified GPT launch for this skill. Three of its points went into this change: worker-only brief items left the review brief, reviewers work blind to each other, and a reviewer dispute no longer goes to the user by default.
+- Catalog: `orchestrator_capabilities` lists a short set; Codex models beyond it appear only with `search`. A free ChatGPT login offered `gpt-6-luna` and legacy `gpt-5.6-terra` and `gpt-5.6-luna`; per the Codex pricing page on this date, Plus ($20) adds GPT-6.1 Sol and GPT-6.2 Sol at 15–160 and 17–180 local messages per five hours.
+- Background for the defaults: correlated errors are higher within one provider (Kim et al., ICML 2025, arXiv 2506.07962); anchoring on a prior verdict lowers review quality, and over half of agent review suggestions on real PRs go unadopted as wrong or unneeded (arXiv 2603.15911). No controlled study was found for plan review by another family or for a third family, so a third family is not in the team.
+- Local usage over 2026-10-13 – 2026-11-17 (T3 state database): 1,011 subagents, all Claude; 351 had a review brief.
+- Not verified: a coordinator run that follows the new plan-review and second-family steps end to end, GPT Sol behaviour (not in the catalog on this date), `isolation: "worktree"` for reviewers, the PR skills in this package, and everything listed as not verified in the earlier records.
 
 Run `python3 docs/check_package.py` from any directory. It checks the package files, the single discoverable entry point, the simple frontmatter and relative links. It does not prove that a model follows the instructions.

@@ -1,6 +1,6 @@
 # Delegate Kit
 
-Do the work in one agent while it fits one context, and coordinate subagents by measured rules when it does not. Delegate Kit is a short orchestration policy for your current assistant: when to do work itself, when to fan out researchers, how to execute a plan or a ticket set in assignments sized by a context budget, which model each assignment needs, how to brief a reviewer, and what to do with the findings.
+Do the work in one agent while it fits one context, and coordinate subagents by measured rules when it does not. Delegate Kit is a short orchestration policy for your current assistant: when to do work itself, when to fan out researchers, how to execute a plan or a ticket set in assignments sized by a context budget, which model each assignment needs, how to get a plan and a risky change reviewed by a second model family, how to brief a reviewer, what to do with the findings, and which decisions to bring to you. Five companion skills adapted from [tstack](https://github.com/t3dotgg/tstack) carry a change from proof to a merged or merge-ready pull request.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -14,8 +14,10 @@ Do the work in one agent while it fits one context, and coordinate subagents by 
 - **Briefs that keep workers small.** Quiet command output (logs to a file, read the failing tail), a commit per part that says what is done and what is next, and a stop rule: done, three failed attempts at the same error, or more than a few lines of work outside the brief.
 - **A coordinator that stays light.** A ledger file instead of memory, reports instead of transcripts, and a handoff to a fresh thread after every second wave or a compaction. In local runs coordinators, not workers, grew largest: up to 900K with repeated compactions.
 - **Explicit models, fresh agents.** Every launch sets the model and effort; money, security and migrations get `high`. Every assignment, fix round and re-review goes to a fresh agent: one kept alive through rounds re-reads its whole context on each request and costs about three times more.
+- **A second model family where it pays.** Models of one family make correlated mistakes. A plan larger than one budget, or one touching money, security, the data model or migrations, is reviewed by the other family (GPT Sol by default) before work starts; risky changes and each wave's diff get a second-family reviewer next to the Claude one. Reviewers work blind to each other, the coordinator checks every finding against the code, and rounds stop on verdicts and confirmed findings within a fixed budget, not on scores.
+- **Questions only when they are yours.** The coordinator rules on choices with one plainly right answer or a cheap undo, records each ruling with its cost if wrong, and brings you only behaviour, business rules, the data model, stack and architecture, money, security, irreversible steps and scope.
 - **Reviews that find the costly defects.** One independent review per wave on its integrated diff, with the risks named and a concrete check for each; each finding comes with the run that confirms it or is marked unconfirmed. User-facing stages also get a browser walkthrough. The coordinator assigns severity: blocking findings are fixed before merge, the rest go into one follow-up list.
-- **Any harness.** The skill states what a launch must control, not a fixed command: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback.
+- **Native in T3 Code.** In [T3 Code](https://github.com/pingdotgg/t3code) the coordinator launches through `delegate_task`: Claude and GPT children, a worktree per parallel writer or reviewer, completion wake-ups instead of polling. Elsewhere it uses native subagents in Claude Code or Codex, or the other family's CLI as a fallback.
 
 ## Install
 
@@ -24,6 +26,8 @@ Use the [Skills CLI](https://github.com/vercel-labs/skills), or copy `skills/del
 ```bash
 npx skills add tomastaker/delegate-kit
 ```
+
+The package holds `delegate-kit` and the five PR skills below; install the ones you use. `full-send` needs `delegate-kit`, `file-pr` and `babysit-pr`; `file-pr` and `babysit-pr` need `leaving-pr-comments`. The PR skills need an authenticated [GitHub CLI](https://cli.github.com), and `babysit-pr` needs `python3` for `pr-wait` outside T3 Code.
 
 The skill needs no runtime of its own. The models and tools it launches, and their authorization, must already be available in your environment.
 
@@ -40,6 +44,18 @@ A subagent that receives a coordinator's brief does the assignment itself.
 Assistants that do not match skills by description can be pointed to the skill with one line in your global instructions (`AGENTS.md` or `CLAUDE.md`):
 
 > Do the work yourself if one agent can finish it in one context. If you launch subagents, load the `delegate-kit` skill first.
+
+## PR skills
+
+Adapted from [t3dotgg/tstack](https://github.com/t3dotgg/tstack) by Theo Browne (MIT); see [notices](THIRD_PARTY_NOTICES.md) for what changed.
+
+| Skill | Say | What it does |
+| --- | --- | --- |
+| `full-send` | "full send" | Takes a change to a merged PR while you are away: proves it, reviews it with the second family, files it, babysits it, merges it. |
+| `full-stop` | "full stop" | The same, but stops when the PR is ready for you to merge. |
+| `file-pr` | "file a PR" | Files a short PR that leads with the problem. |
+| `babysit-pr` | "babysit" | Watches a PR through CI and review bots (`watch_pull_request` in T3 Code, `pr-wait` elsewhere) and fixes the real findings. |
+| `leaving-pr-comments` | (automatic) | Marks comments an agent posts on your behalf. |
 
 ## Where it fits with planning skills
 
@@ -63,11 +79,12 @@ Delegate Kit executes; it does not interview or write specs. It works well after
 | --- | --- | --- |
 | Implementation that needs judgement, code review, research across code | Opus 5.5 | medium |
 | Implementation or review touching money, security, access rights, migrations | Opus 5.5 | high |
+| Second-family review of a plan, a risky change or a wave's diff | newest GPT Sol in the catalog | high |
 | Research across documents and the web, fix round by an exact list, browser walkthrough | Sonnet 5.5 | medium |
 | Fetching and extracting facts, scoped search, running checks, mechanical edits a test confirms | Haiku 5.5 | medium |
 | Only when you name the model | Fable 5.2 | as named |
 
-Effort goes up when you ask; after a failed attempt the next agent gets one level more effort, after a second a stronger model, after a third the question comes to you. The table lists Claude models only for now; a model of another family, such as GPT, runs when you name it. Launches use your existing logins; a route that bills an API key or another account needs your approval.
+Effort goes up when you ask; after a failed attempt the next agent gets one level more effort, after a second a stronger model, after a third the question comes to you. GPT runs as the second-family reviewer and otherwise only when you name it; without Sol in your catalog the review runs on the strongest GPT offered and the report names it. Launches use your existing logins; a route that bills an API key or another account needs your approval.
 
 To keep personal settings across updates, keep your own team file outside the installed skill and name its path in your request or standing instructions; it replaces the bundled one.
 

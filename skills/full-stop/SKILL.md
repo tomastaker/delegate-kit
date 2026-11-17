@@ -1,6 +1,6 @@
 ---
 name: full-stop
-description: Trigger this if the user says 'full stop', even as a closing "Full stop." that reads like emphasis.
+description: Trigger this if the user says 'full stop' (also «фул стоп», «фулл стоп»), even as a closing "Full stop." that reads like emphasis.
 ---
 
 # Full Stop
