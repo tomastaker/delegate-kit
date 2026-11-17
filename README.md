@@ -1,6 +1,6 @@
 # Delegate Kit
 
-Do the work in one agent while it fits one context, and coordinate subagents by measured rules when it does not. Delegate Kit is a short orchestration policy for your current assistant: when to do work itself, when to split it across parallel subagents, which model each assignment needs, how to brief a reviewer, and what to do with the findings.
+Do the work in one agent while it fits one context, and coordinate subagents by measured rules when it does not. Delegate Kit is a short orchestration policy for your current assistant: when to do work itself, when to fan out researchers, how to execute a plan or a ticket set in assignments sized by a context budget, which model each assignment needs, how to brief a reviewer, and what to do with the findings.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
@@ -8,11 +8,14 @@ Do the work in one agent while it fits one context, and coordinate subagents by 
 
 ## Why use it?
 
-- **Solo first.** Work that one agent finishes in one context, up to about an hour or about three thousand changed lines, stays with the coordinator. At that size delegation was measured to cost about 40% more for little or no time saved.
-- **Right-sized, parallel work.** Larger tasks are split where the parts touch least, into assignments that one agent finishes in one context. Shared pieces such as an API contract are settled first, everything unblocked launches at once in the background, and overlapping writers get separate branches or worktrees.
-- **Explicit models, fresh agents.** Every launch sets the model and effort, because native subagent tools otherwise inherit the coordinator's. Every assignment, fix round and re-review goes to a fresh agent with a short brief: an agent kept alive through rounds re-reads its whole context on each request and costs about three times more.
-- **Reviews that find the costly defects.** A large or risky change gets an independent review by an agent that did not write it. The review brief names the risks with a concrete check for each. The coordinator assigns severity: blocking findings are fixed before merge, the rest go into one follow-up list.
-- **Any harness.** The skill states what a launch must control, not a fixed command. It uses what your environment offers: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback.
+- **Size by context, not by hours.** Every assignment is planned to finish within a budget of about 200K tokens of context: up to about 1,000 written lines in 5–7 files, one layer or one thin vertical slice, about ten brief items. Past about 300K an agent costs several times more per turn and works worse, and it cannot see how full its context is. In local runs, assignments sized by "an hour or a couple of thousand lines" reached 400–600K.
+- **Three modes.** Solo for operations, incidents, single-place fixes and changes under about 800 lines; research fan-out with one researcher per independent direction; implementation by workers: one worker when the work fits one budget, a plan in waves of 3–4 when it does not. More agents is not better: each costs about 25K tokens just to orient, so the coordinator uses the fewest that keep each within budget.
+- **Runs your plan, not its own.** A ticket set from `/to-tickets`, a plan file or a spec becomes the assignment graph. The coordinator merges small tickets, splits oversized ones into stages and records the map in a ledger file; it does not rewrite the tickets.
+- **Briefs that keep workers small.** Quiet command output (logs to a file, read the failing tail), a commit per part that says what is done and what is next, and a stop rule: done, three failed attempts at the same error, or more than a few lines of work outside the brief.
+- **A coordinator that stays light.** A ledger file instead of memory, reports instead of transcripts, and a handoff to a fresh thread after every second wave or a compaction. In local runs coordinators, not workers, grew largest: up to 900K with repeated compactions.
+- **Explicit models, fresh agents.** Every launch sets the model and effort; money, security and migrations get `high`. Every assignment, fix round and re-review goes to a fresh agent: one kept alive through rounds re-reads its whole context on each request and costs about three times more.
+- **Reviews that find the costly defects.** One independent review per wave on its integrated diff, with the risks named and a concrete check for each; each finding comes with the run that confirms it or is marked unconfirmed. User-facing stages also get a browser walkthrough. The coordinator assigns severity: blocking findings are fixed before merge, the rest go into one follow-up list.
+- **Any harness.** The skill states what a launch must control, not a fixed command: native subagents in Claude Code or Codex, an app orchestrator such as T3 Code, or the other family's CLI as a fallback.
 
 ## Install
 
@@ -38,18 +41,33 @@ Assistants that do not match skills by description can be pointed to the skill w
 
 > Do the work yourself if one agent can finish it in one context. If you launch subagents, load the `delegate-kit` skill first.
 
+## Where it fits with planning skills
+
+Delegate Kit executes; it does not interview or write specs. It works well after Matt Pocock's [grilling, to-spec and to-tickets](https://github.com/mattpocock/skills), which stay separate skills that you start yourself. When a large task arrives without the plan it needs, the coordinator suggests the missing step in one line.
+
+| Task | Before execution | Execution |
+| --- | --- | --- |
+| Operations, incident, a fix in one place, a question | nothing | solo |
+| Research with several independent directions | nothing | research fan-out |
+| Change over about 800 lines, up to three assignments, decisions settled | nothing; the coordinator writes a short stage plan | one worker, or a few in one wave |
+| Same, but behaviour, data model or UX still open | `/grilling` | one worker, or a few in one wave |
+| Feature larger than three assignments, or work over several sessions | `/grilling`, then `/to-spec`, then `/to-tickets` | plan execution in waves |
+
+`/to-spec` is worth it when the work outlives the conversation; `/to-tickets` when there are more than three assignments with dependencies. Below that, the conversation and the ledger are enough. Local ticket files are updated as assignments are accepted; tracker issues change only with your go for that run.
+
 ## Your team
 
-[team.md](skills/delegate-kit/team.md) names the model for each kind of work:
+[team.md](skills/delegate-kit/team.md) names the model and effort for each kind of work:
 
-| Work | Model |
-| --- | --- |
-| Implementation that needs judgement, debugging, design, code review | Opus 5.5 |
-| Fix round by an exact list of findings | Sonnet 5.5 |
-| Scoped search, running checks, mechanical edits a test confirms | Haiku 5.5 |
-| Only when you name the model | Fable 5.1 |
+| Work | Model | Effort |
+| --- | --- | --- |
+| Implementation that needs judgement, code review, research across code | Opus 5.5 | medium |
+| Implementation or review touching money, security, access rights, migrations | Opus 5.5 | high |
+| Research across documents and the web, fix round by an exact list, browser walkthrough | Sonnet 5.5 | medium |
+| Fetching and extracting facts, scoped search, running checks, mechanical edits a test confirms | Haiku 5.5 | medium |
+| Only when you name the model | Fable 5.2 | as named |
 
-Effort is `medium` for every launch and goes up one level after a failed attempt or when you ask. The table lists Claude models only for now; a model of another family, such as GPT, runs when you name it. Launches use your existing logins; a route that bills an API key or another account needs your approval.
+Effort goes up when you ask; after a failed attempt the next agent gets one level more effort, after a second a stronger model, after a third the question comes to you. The table lists Claude models only for now; a model of another family, such as GPT, runs when you name it. Launches use your existing logins; a route that bills an API key or another account needs your approval.
 
 To keep personal settings across updates, keep your own team file outside the installed skill and name its path in your request or standing instructions; it replaces the bundled one.
 
