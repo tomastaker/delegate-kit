@@ -107,7 +107,7 @@ Workers run the tests of the files they touch. You run the full test suite on th
 
 ## Review
 
-A large or risky change gets an independent review by an agent that did not write it. In plan execution, one review covers a wave's integrated diff; when that diff is larger than about two assignments, split the review by area. Findings follow the risk list in the brief, so write it with care. The review brief says the review is read-only (the reviewer edits, commits and launches nothing) and names:
+A large change, or one in a risk area, gets an independent review by an agent that did not write it. In plan execution, one review covers a wave's integrated diff; when that diff is larger than about two assignments, split the review by area. Findings follow the risk list in the brief, so write it with care. The review brief says the review is read-only (the reviewer edits, commits and launches nothing) and names:
 
 - what the change must do: the acceptance criteria, with the author's claims marked as claims to verify and the author's reasoning left out;
 - the risks, each with a concrete check: the scenarios that lose data, break the main flow or leak secrets, hostile input for every parser and regular expression that reads input from users or outside systems, migrations on data shaped like production;
@@ -123,7 +123,7 @@ You assign severity; reviewers under-rate it. Blocking means data loss, a securi
 
 Keep the change at the size its goal needs: review loops grow a change one cheap-looking fix at a time. Fix the intended case; extra guards, tests, compatibility and small performance work go to the follow-up list with a one-line reason. Prefer the fix that deletes or narrows code.
 
-A fix round writes new code. When it adds logic or touches a risk area, one fresh reviewer, of the family that raised the findings it fixes, checks its diff and those findings, scoped to that diff. Small fixes, including your own, you accept by reading the diff, and that closes their findings. The stop signal is the verdicts and the confirmed findings: stop when no blocking finding is open and the latest review approves, or when a round brings only items you rate as follow-ups. The budget is three rounds, five in a risk area while a blocking finding stays open with evidence; past it, settle what remains under Rulings.
+A fix round writes new code. When it adds logic or touches a risk area, one fresh reviewer, of the family that raised the findings it fixes (one of each when both did), checks its diff and those findings, scoped to that diff. Small fixes, including your own, you accept by reading the diff, and that closes their findings. The stop signal is the verdicts and the confirmed findings: stop when no blocking finding is open and the latest review approves, or when a round brings only items you rate as follow-ups. The budget is three rounds, five in a risk area while a blocking finding stays open with evidence; past it, settle what remains under Rulings.
 
 **Escalation.** After a failed attempt at the same assignment or finding, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, settle it under Rulings.
 
