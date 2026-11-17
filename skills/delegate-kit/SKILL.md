@@ -1,6 +1,6 @@
 ---
 name: delegate-kit
-description: Rules for coordinating subagents - when to stay solo, research fan-out, executing a plan or tickets, sizing by context budget, briefs, plan review and code review with a second model family, fix rounds, rulings versus questions to the user, model and effort per launch. Use when you are about to launch a subagent, when a plan is ready for review, when you are given a plan or ticket set to execute, when work outgrows one context, or when the user asks to delegate or change the team.
+description: Rules for coordinating subagents - when to stay solo, research fan-out, executing a plan or tickets, sizing by context budget, briefs, plan review and code review with a second model family, fix rounds, rulings versus questions to the user, model and effort per launch. Use when you are about to launch a subagent, when a plan larger than one context or touching money, security or data is ready for review, when you are given a plan or ticket set to execute, when work outgrows one context, or when the user asks to delegate or change the team.
 license: MIT
 ---
 
@@ -14,7 +14,7 @@ If your task is a coordinator's brief, you are a worker: do the assignment yours
 
 Decide yourself when one option is plainly the target and the others are clearly worse, or when a wrong choice is cheap to undo. Write each such **ruling** into the ledger with what it costs if it is wrong, and carry on.
 
-Bring a decision to the user only when it is theirs: behaviour and business rules that users meet, the data model, a stack or architecture choice that binds later work, money, security, an irreversible or outward-facing action, a change of scope. Ask once, with the options, your recommendation first and why, and keep working on what does not depend on the answer.
+Bring a decision to the user only when it is theirs: behaviour and business rules that users meet, a decision in a risk area (see Budget), an irreversible or outward-facing action, a change of scope. Ask once, with the options, your recommendation first and why, and keep working on what does not depend on the answer.
 
 A dispute between reviewers, or between you and a reviewer, is settled by evidence: a run, the code, the spec. It goes to the user only when it falls under their decisions.
 
@@ -25,6 +25,8 @@ Context is the unit of size. Past about 300K tokens an agent costs several times
 An assignment is within budget when it writes up to about 1,000 lines in 5–7 files, stays in one layer or one thin vertical slice, fits in about ten brief items and reads documents by named section. It is over budget when it takes a whole subsystem, spans two or more apps, combines UI design, a migration and browser checks, merges several findings lists, or starts with a list of whole documents to read.
 
 Every agent pays a fixed orientation cost of about 25K tokens plus its brief, so more agents is not better. Before launching more than one, name what each extra agent buys; use the fewest that keep each within budget.
+
+The **risk areas** are money, security, access rights, the data model and its migrations, and a stack or architecture choice that binds later work. Work in a risk area gets `high` effort, a second-family review and a larger round budget.
 
 ## Choose the mode
 
@@ -48,9 +50,9 @@ When the decisions are settled, or the user does not take the suggestion up, wri
 
 ## Plan review
 
-A plan for work larger than one budget, or one that touches money, security, access rights, the data model, migrations or architecture, gets a **second-family** review before the first launch: a reviewer on the other model family from the team file, whose errors correlate least with yours. Smaller plans go straight to execution.
+A plan for work larger than one budget, or for work over about 800 lines in a risk area, gets a **second-family** review before the first launch: a reviewer on the other model family from the team file, whose errors correlate least with yours. Solo-mode work and smaller plans go straight to execution.
 
-The reviewer gets the task as the user stated it, the plan, and the repository; your reasoning and the conversation stay out, so it judges the plan on its own. Its brief asks for blocking risks only, each tied to a path or a document section: assumptions about the code that are wrong, scenarios the plan misses, conflicts with existing invariants, a markedly simpler route. It replies with a verdict, approve or changes, and numbered findings.
+The reviewer gets the task as the user stated it, the plan, and the repository; your reasoning and the conversation stay out, so it judges the plan on its own. The review is read-only, as in Review. Its brief asks for blocking risks only, each tied to a path or a document section: assumptions about the code that are wrong, scenarios the plan misses, conflicts with existing invariants, a markedly simpler route. It replies with a verdict, approve or changes, and numbered findings.
 
 Check every finding against the code yourself; a finding is a claim until the code confirms it. Mark each one accepted, declined with the evidence, or a decision for the user under Rulings, and update the plan. A second round, by a fresh agent, reads only the changed parts and the open findings. Two rounds is the budget; settle whatever remains under Rulings.
 
@@ -113,7 +115,7 @@ A large or risky change gets an independent review by an agent that did not writ
 
 The reviewer reads the diff, confirms findings with targeted runs and short scripts, and replies with a verdict, approve or changes, and each finding as a scenario: state, wrong result, how it was confirmed. A finding no run confirms is marked unconfirmed. Lint, typecheck and test suites stay with the author.
 
-A change touching money, security, access rights or migrations, and a wave's integrated diff, also gets a **second-family** reviewer: launched together with the first, with the same brief. Each works blind to the other's findings; you merge them. Two reviewers agreeing is not evidence; a confirming run is.
+A change in a risk area, and a wave's integrated diff, also gets a **second-family** reviewer: launched together with the first, with the same brief. Each works blind to the other's findings; you merge them. Two reviewers agreeing is not evidence; a confirming run is.
 
 After a stage users will see, a separate agent walks the changed screens in the browser as a user and reports what it saw.
 
@@ -121,9 +123,9 @@ You assign severity; reviewers under-rate it. Blocking means data loss, a securi
 
 Keep the change at the size its goal needs: review loops grow a change one cheap-looking fix at a time. Fix the intended case; extra guards, tests, compatibility and small performance work go to the follow-up list with a one-line reason. Prefer the fix that deletes or narrows code.
 
-A fix round writes new code. When it adds logic or touches security, data or migrations, a fresh reviewer checks its diff and the open findings, scoped to that diff; small fixes, including your own, you accept by reading the diff. The stop signal is the verdicts and the confirmed findings: stop when every reviewer approves with no blocking finding open, or when a round brings only follow-up items. The budget is three rounds, five when security, access rights, money or data are at stake and a blocking finding stays open with evidence; past it, settle what remains under Rulings.
+A fix round writes new code. When it adds logic or touches a risk area, one fresh reviewer, of the family that raised the findings it fixes, checks its diff and those findings, scoped to that diff. Small fixes, including your own, you accept by reading the diff, and that closes their findings. The stop signal is the verdicts and the confirmed findings: stop when no blocking finding is open and the latest review approves, or when a round brings only items you rate as follow-ups. The budget is three rounds, five in a risk area while a blocking finding stays open with evidence; past it, settle what remains under Rulings.
 
-**Escalation.** After a failed attempt at the same assignment or finding, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, bring it to the user.
+**Escalation.** After a failed attempt at the same assignment or finding, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, settle it under Rulings.
 
 ## Report
 

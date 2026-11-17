@@ -46,9 +46,10 @@ one appears.
    smallest change that works. Fix the case that happened, not every case
    that could. If you are on the default branch, create a branch first.
 2. **Prove it.** Get proof for every change you made. See "Proof".
-3. **Get feedback.** Review the change as the `delegate-kit` skill's Review
-   section says, with its second-family reviewer, and settle the findings by
-   its stop rule and round budget.
+3. **Get feedback.** Get an independent review as the `delegate-kit` skill's
+   Review section says, even for a small change, adding its second-family
+   reviewer where that section calls for one. Settle the findings by its stop
+   rule and round budget.
 4. **File the PR** with the `file-pr` skill. Rebase onto the latest default
    branch first. Add one short line to the description that says how you proved
    the change.
@@ -86,6 +87,7 @@ Ask the user.
 Full confidence means all of these are true on the latest commit:
 
 - Your proof covers every change in the diff.
+- No blocking finding from step 3 is open.
 - Required checks are green.
 - Review bots have finished, and each finding is fixed or dismissed with a
   written reason.
@@ -118,7 +120,8 @@ Ask only when you cannot continue alone:
 - Another PR makes this one obsolete.
 
 Decide everything else yourself with sensible defaults, and list those decisions
-in the report.
+in the report. Decisions that the `delegate-kit` skill's Rulings section gives to
+the user go through this section too.
 
 If no question tool is available, or the tool returns no answer, take the safe
 path: leave the PR open and unmerged, and start your final message with the

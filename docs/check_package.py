@@ -13,12 +13,12 @@ assert {p.relative_to(package).as_posix() for p in package.rglob("*") if p.is_fi
 companions = {"babysit-pr", "file-pr", "full-send", "full-stop", "leaving-pr-comments"}
 skills = {p.parent.name for p in (root / "skills").rglob("SKILL.md")}
 assert skills == {package.name} | companions, f"Unexpected skills: {sorted(skills)}"
-for name in sorted(companions):
+for name in sorted(companions | {package.name}):
     body = (root / "skills" / name / "SKILL.md").read_text()
     head = re.fullmatch(r"---\n(.*?)\n---\n(.+)", body, re.S)
     assert head and f"name: {name}\n" in head[1] + "\n", f"Bad frontmatter in {name}"
     assert "description: " in head[1], f"Missing description in {name}"
-    for other in re.findall(r"`([a-z-]+)` skill", body):
+    for other in re.findall(r"`([a-z-]+)`\s+skill", body):
         assert other in skills, f"{name} refers to a skill not in the package: {other}"
 pr_wait = root / "skills" / "babysit-pr" / "scripts" / "pr-wait"
 assert pr_wait.stat().st_mode & 0o111, "pr-wait must be executable"

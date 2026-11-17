@@ -9,9 +9,9 @@ Launch subagents through the environment's native route. The other model family 
 | Work | Model | Effort |
 | --- | --- | --- |
 | Implementation that needs judgement, debugging, design | `claude-opus-5-5` | `medium` |
-| Implementation or review touching money, security, access rights or data migrations | `claude-opus-5-5` | `high` |
+| Implementation or review in a risk area: money, security, access rights, the data model and its migrations, a binding stack or architecture choice | `claude-opus-5-5` | `high` |
 | Code review, including the review of a fix round | `claude-opus-5-5` | `medium` |
-| Second-family review: a plan, a risky change, a wave's integrated diff | the newest GPT Sol the catalog offers (`gpt-6.2-sol`, `gpt-6.1-sol` on 2026-11-18) | `high` |
+| Second-family review: a large or risk-area plan, a risk-area change, a wave's integrated diff | the newest GPT Sol the catalog offers (`gpt-6.2-sol`, `gpt-6.1-sol` on 2026-11-18) | `high` |
 | Research across code: tracing a subsystem, hunting a class of bugs | `claude-opus-5-5` | `medium` |
 | Research across documents and the web: reading, comparing, summarizing sources | `claude-sonnet-5-5` | `medium` |
 | Fix round where every finding names the file, the scenario and the fix | `claude-sonnet-5-5` | `medium` |
