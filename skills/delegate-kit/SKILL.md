@@ -86,6 +86,7 @@ When the T3 orchestration tools are listed, they are the route for every launch:
 - Launch the other family, every background assignment and every writer that needs its own checkout with `delegate_task`: `target` with `providerInstanceId`, `model` and `options`, plus `role`. Effort is `effort` for Claude and `reasoningEffort` for Codex. `isolation: "worktree"` gives a child its own checkout of your current commit, so commit what it needs first.
 - A Claude assignment you wait on in the foreground can use the native subagent tool with model and effort.
 - Completion wakes you; read each result once with `task_status`. Record each `taskId` in the ledger and stop a run you replace with `task_cancel`.
+- A Codex child asks the user to approve commands it rates dangerous, such as `rm -f` or `kill`, even with full access. Its brief asks it to create scratch files in a fresh directory under `/tmp` and leave them there, and to bound long runs with `timeout`.
 - `runtimeMode` pauses a child for approvals; it does not make it read-only. Reviewers get `isolation: "worktree"`, or you leave the reviewed paths untouched until every review has returned.
 - The PR watch (`watch_pull_request`) stays with your thread.
 
