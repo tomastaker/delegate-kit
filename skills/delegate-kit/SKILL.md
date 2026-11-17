@@ -1,24 +1,56 @@
 ---
 name: delegate-kit
-description: Rules for coordinating subagents on work too large for one agent - sizing, launch, briefs, review, fix rounds, model and effort per launch. Use when you are about to launch a subagent, or when the user asks to delegate or change the team.
+description: Rules for coordinating subagents - when to stay solo, research fan-out, executing a plan or tickets, sizing by context budget, briefs, review, fix rounds, model and effort per launch. Use when you are about to launch a subagent, when you are given a plan or ticket set to execute, when work outgrows one context, or when the user asks to delegate or change the team.
 license: MIT
 ---
 
 # Delegate Kit
 
-You are the coordinator: you keep the conversation, the decisions and acceptance. [team.md](team.md) names the model and effort for each kind of work; read it before the first launch. A team file named by the user replaces it. User and project instructions take precedence over this skill.
+You are the coordinator: you keep the conversation, the decisions, the ledger and acceptance. [team.md](team.md) names the model and effort for each kind of work; read it before the first launch. A team file named by the user replaces it. User and project instructions take precedence over this skill.
 
 If your task is a coordinator's brief, you are a worker: do the assignment yourself.
 
-## Solo first
+## Budget
 
-Size the whole task before anything else. If you alone would finish it in one context, up to about an hour of work or about three thousand changed lines, do it yourself and launch no implementers: at that size delegation was measured to cost about 40% more tokens for little or no time saved. Delegate implementation only for work beyond that. An independent review of a large or risky change is worth its cost at any size.
+Context is the unit of size. Past about 300K tokens an agent costs several times more per turn and works worse, and it cannot see how full its context is. Plan every assignment, and your own solo work, to finish within a **budget** of about 200K tokens of context.
 
-## Size
+An assignment is within budget when it writes up to about 1,000 lines in 5–7 files, stays in one layer or one thin vertical slice, fits in about ten brief items and reads documents by named section. It is over budget when it takes a whole subsystem, spans two or more apps, combines UI design, a migration and browser checks, merges several findings lists, or starts with a list of whole documents to read.
 
-One assignment is a piece a single agent finishes in one context: up to about an hour of work or a couple of thousand changed lines. Keep smaller parts together in one assignment; cut larger work where the parts touch least, so each can be checked on its own. Settle what several parts share (an API contract, a schema, shared types) first and put it in every brief.
+Every agent pays a fixed orientation cost of about 25K tokens plus its brief, so more agents is not better. Before launching more than one, name what each extra agent buys; use the fewest that keep each within budget.
 
-Launch every assignment with no unfinished blockers at once, in the background. Writers whose files overlap get separate branches or worktrees; you integrate. A worktree starts from a commit: commit or pass along what the worker needs.
+## Choose the mode
+
+Pick a mode for the work in front of you; a long session moves between them.
+
+1. **Solo.** Operations, incidents, a fix in one place, a lookup of one or two searches, UI tweaks, any change you expect under about 800 lines. Do it yourself.
+2. **Research fan-out.** A question with two or more independent directions (sources, subsystems, hypotheses): one researcher per direction, usually 2–5. Each finding cites a source, path or command; a direction that found nothing is reported as a gap. You merge the reports.
+3. **Implementation by workers.** A change over about 800 lines, or any implementation after your session has compacted or you have already written about 800 lines in it. Work that fits one budget goes to one worker; you keep the decisions and acceptance. Work larger than one budget runs as a plan in waves.
+
+## Input
+
+Execute the plan the user already has: a ticket set with blocking edges (from `/to-tickets`: `.scratch/<feature>/issues/NN-*.md` or tracker issues), a plan file, a spec or the task checklist. The blocking edges are the assignment graph. Interviews, specs and ticket content are the user's tools: you mark status in local ticket files and leave their content as written.
+
+When work larger than one budget arrives without a plan, suggest in one line the step it lacks:
+
+- decisions that belong to the user (behaviour, data model, UX, priorities) are open: `/grilling`;
+- the work spans several sessions or needs a durable record: `/to-spec`;
+- it needs more than three assignments with dependencies: `/to-tickets`.
+
+When the decisions are settled, or the user does not take the suggestion up, write a short stage plan into the ledger yourself and proceed.
+
+## Plan the waves
+
+Map each ticket or plan item to assignments and record the map in the ledger. Merge items far under budget (a quarter of it or less) into one assignment: items of the same kind, or a blocker together with the item it unblocks. Split an item over budget into stages where its parts touch least, each with its own check. A split that changes acceptance criteria or blocking edges goes to the user. Settle what parts share (an API contract, a schema, shared types) first and put it in every brief.
+
+Launch the **frontier**, every assignment with no unfinished blocker, together in the background, in waves of 3–4. Writers running in parallel each get their own worktree or branch; you integrate. A worktree holds only committed files: commit what the worker needs, or give absolute paths into your checkout for ignored and uncommitted files such as `.scratch/`. When a wave lands, tell the next workers what changed in shared interfaces.
+
+## Ledger
+
+Keep the task's **ledger** in one file: the task checklist if the project has one, otherwise `docs/tasks/<name>.md`. Only you write it. It holds the assignment map; each assignment's model, effort, status and tokens used; and the rulings you made. Update it as you accept each assignment; after a compaction, trust the ledger and git over memory. Tracker issues change only with the user's go for that run.
+
+When the harness reports a finished worker far over budget (about 300K or more), cut the remaining assignments smaller.
+
+Keep your own context small: wait for completion notifications, read reports rather than transcripts, and pass material by file path. After every second wave, and after any compaction of your own session, write a **handoff** into the ledger (done, next, open decisions) and offer the user to continue in a fresh thread from it.
 
 ## Launch
 
@@ -30,26 +62,38 @@ Prefer the environment's own orchestration; use the other family's CLI only when
 
 ## Brief
 
-The brief carries everything the worker needs: that it is a delegated assignment, the outcome, the branch and files it may change, the context, constraints, the checks to run and the evidence to return. Ask for a short report: result, checks, open questions. For example:
+The brief is the whole bar: the worker does that assignment, with the checks it names, and launches no agents of its own. It carries that it is a delegated assignment, the outcome and acceptance criteria, the worktree or branch and the files it may change, pointers to the ticket, spec, shared contracts and notes, the constraints, the checks to run, who checks the screens in the browser, and the evidence to return. Every brief also asks the worker to:
 
-> Delegated assignment. Add retry with exponential backoff to `src/http/client.ts`; change only that file and its test. Retry 429 and 5xx up to 3 times; never retry POST. Run `pnpm test http`. Report in a few lines: what changed, the test output, open questions.
+- write test, build and log output to a file of its own and read only the tail of a failure;
+- commit only the paths it changed, after each part, with a message saying what is done and what is next;
+- stop and report when the assignment is done, after three failed attempts at the same error, or on finding more than a few lines of work outside the brief;
+- leave pushes and repository-wide git operations (stash, reset, clean, switching branches) to you;
+- report in a few lines: result, checks, open questions, with paths to anything long; the ledger and task checklist stay with you.
 
-The full test suite runs twice per change: once by the implementer before handing over and once by you on the merged result. Everyone else runs the tests of the files they touch.
+For example:
+
+> Delegated assignment. Add retry with exponential backoff to `src/http/client.ts`; change only that file and its test. Retry 429 and 5xx up to 3 times; never retry POST. Run `pnpm test http > .logs/http-retry.log 2>&1` and read the tail on failure. Stop after three failed attempts at the same error. Report in a few lines: what changed, the test result, open questions.
+
+Workers run the tests of the files they touch. You run the full test suite on the integrated result: once per wave in plan execution, once for a single worker's change.
 
 ## Review
 
-A large or risky change gets an independent review by an agent that did not write it. Findings follow the risk list in the brief, so write it with care. The review brief names:
+A large or risky change gets an independent review by an agent that did not write it. In plan execution, one review covers a wave's integrated diff; when that diff is larger than about two assignments, split the review by area. Findings follow the risk list in the brief, so write it with care. The review brief names:
 
-- what the change must do, with the author's claims marked as claims to verify;
-- the risks, each with a concrete check: the scenarios that lose data, break the main flow or leak secrets, hostile input for every parser and regular expression, migrations on data shaped like production;
+- what the change must do: the acceptance criteria, with the author's claims marked as claims to verify and the author's reasoning left out;
+- the risks, each with a concrete check: the scenarios that lose data, break the main flow or leak secrets, hostile input for every parser and regular expression that reads input from users or outside systems, migrations on data shaped like production;
 - what the author already verified, so the reviewer spends nothing on it.
 
-The reviewer reads the diff, confirms findings with targeted runs and short scripts, and reports each finding as a scenario: state, wrong result, how it was confirmed. Lint, typecheck and test suites stay with the author.
+The reviewer reads the diff, confirms findings with targeted runs and short scripts, and reports each finding as a scenario: state, wrong result, how it was confirmed. A finding no run confirms is marked unconfirmed. Lint, typecheck and test suites stay with the author.
 
-You assign severity; reviewers under-rate it. Blocking means data loss, a security defect, a broken main scenario, a regression, a crash or a hang; in doubt, blocking. A fresh agent fixes blocking findings before merge. The rest go into one follow-up list, fixed in one pass.
+After a stage users will see, a separate agent walks the changed screens in the browser as a user and reports what it saw.
 
-A fix round writes new code. When it adds logic or touches security, data or migrations, a fresh reviewer checks its diff, scoped to that diff. Small fixes you accept by reading the diff.
+You assign severity; reviewers under-rate it. Blocking means data loss, a security defect, a broken main scenario, a regression, or a crash or hang on input users or outside systems can send; in doubt, blocking. Malformed data or config the operator controls is a follow-up item unless the ticket asks otherwise. Blocking findings are fixed before merge: a few lines you fix yourself, the rest a fresh agent fixes. The other findings go into one follow-up list, fixed in one pass.
+
+A fix round writes new code. When it adds logic or touches security, data or migrations, a fresh reviewer checks its diff, scoped to that diff, once per findings list: what that re-review still finds follows the escalation rule if blocking and goes to the follow-up list otherwise. Small fixes, including your own, you accept by reading the diff.
+
+**Escalation.** After a failed attempt at the same assignment or finding, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, bring it to the user.
 
 ## Report
 
-Name the model and effort that ran for each assignment.
+Name the model and effort that ran for each assignment, and list every ruling you made on the user's behalf with what it costs if it is wrong.

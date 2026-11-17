@@ -8,17 +8,20 @@ Inspect the actual tool trace (skill loads, launches with their model and effort
 
 | Scenario | Expected behavior |
 | --- | --- |
-| Task that fits one context (up to about an hour or three thousand changed lines) | Coordinator does it itself; the skill does not load; no implementers. |
-| Task beyond one context, without naming the skill | Skill loads before the first launch; the work is split into assignments of one context each. |
-| Task with a shared piece and dependent parts | Shared piece settled first and passed in every brief; unblocked assignments launched together in the background; overlapping writers in separate branches or worktrees. |
-| Any launch | Model from the team file and effort `medium`, both set explicitly; Fable only when the user names it. |
-| Fix round, next stage, re-review | A fresh agent with a short brief; a finished agent is continued only for a short question about its own report. |
-| Review of a large or risky change | An agent that did not write the code. The brief lists what the change must do, the author's claims as claims to verify, the risks with a concrete check each, and what is already verified. Findings come back as scenarios. |
-| Review findings | The coordinator assigns severity; a fresh agent fixes blocking findings before merge; the rest go into one follow-up list. |
-| Fix round that adds logic or touches security, data or migrations | A fresh reviewer checks that diff only. |
-| Full test suite | Twice per change: the implementer before handing over, the coordinator on the merged result. |
-| Light work (scoped search, running checks, mechanical edit a test confirms) | Haiku, not the coordinator's model. |
-| Worker sees the skill | Does its assignment itself. |
+| Operations, incident, fix in one place, change under about 800 lines | Coordinator does it itself; the skill need not load; no agents. |
+| Question with two or more independent directions | One researcher per direction, usually 2–5; findings cite a source, path or command; empty directions reported as gaps. |
+| Change over about 800 lines that fits one budget, or any implementation after the coordinator compacted or wrote about 800 lines itself | One worker within budget; the coordinator keeps decisions and acceptance. |
+| Work larger than one budget, with or without a ticket set | Assignments sized to about 200K context (up to about 1,000 lines, one layer or thin vertical slice); items far under budget merged; frontier launched in waves of 3–4; each parallel writer in its own worktree or branch; the map recorded in the ledger. |
+| Large task without a plan | One-line suggestion of `/grilling`, `/to-spec` or `/to-tickets` as needed; without the user taking it up, a short stage plan in the ledger. |
+| Any launch | Model and effort from the team file, both set explicitly; `high` for money, security, access rights and migrations; Fable only when the user names it. |
+| Brief | Delegated assignment, outcome, acceptance criteria, files, pointers (absolute for ignored or uncommitted files), checks, who checks the browser; logs to a file, commit own paths per part, stop rules, short report. |
+| Fix round, next stage, re-review | A fresh agent with a short brief; effort, then model, then the user after repeated failure. |
+| Review | One per wave on the integrated diff, split by area above about two assignments; claims to verify without the author's reasoning; risks with checks; findings as scenarios confirmed by a run or marked unconfirmed. |
+| Review findings | The coordinator assigns severity; crashes on operator-controlled data are follow-up items; a few-line blocking fix by the coordinator, larger by a fresh agent; one re-review per findings list. |
+| User-facing stage | A separate browser walkthrough as a user. |
+| Full test suite | Workers run the tests of their files; the coordinator runs the full suite on each wave's integrated result. |
+| Coordinator context | Ledger updated per accepted assignment; no polling or transcript reading; handoff and an offer of a fresh thread after every second wave or a compaction. |
+| Worker sees the skill | Does its assignment itself and launches no agents. |
 | Harness with its own orchestrator (T3 Code) | Uses that orchestrator's delegation tools; no conflicting CLI route. |
 | Model of another family named by the user | Runs that model; reports an unavailable route instead of substituting silently. |
 | Timeout or lost connection | Status stays unknown until the previous writer's work is inspected. |
@@ -71,5 +74,35 @@ Change: the skill now starts with "Solo first"; every assignment goes to a fresh
 - Limitations: one run per cell, so the cost gap between variants A and B on the large task may be run-to-run spread. The replay ended one step early: in headless mode the process exits when the last subagent ends its turn waiting for its own background command, so the final merge of one test fix and the coordinator's report are missing. The replay's result was not compared blind with the overnight result.
 - GPT models were removed from the team file for now: the names it listed were not offered by the Codex catalog on that day, and GPT launches are not in use.
 - Not verified: the Haiku row of the team file in a coordinator run; GPT-side launches and the pointer line on assistants other than Claude Code; solo implementation followed by one independent review on the large task; everything listed as not verified in the earlier records.
+
+## Validation record — 2026-11-17
+
+Change: the skill now sizes work by a context budget of about 200K tokens, chooses between solo work, research fan-out and implementation by workers, executes an existing plan or ticket set as waves, keeps a ledger, and every brief asks for quiet output, stop rules and a short report. The team file adds `high` effort for money, security, access rights and migrations.
+
+- Coordinator runs: Opus 5.5 medium, `claude -p` on Claude Code 2.1.326, user-level settings excluded (`--setting-sources project,local`; user CLAUDE.md and user skills confirmed absent), `--permission-mode acceptEdits` with an explicit tool list, the skill installed in the project under another name, one run per cell.
+- Sizing replay on a real oversized task: part В2 (partner cabinet UI) of a private monorepo's reseller program. The original run gave all of В2 to one worker on Opus 5.5 medium; it ran 105 min, peaked at 619K context and wrote about 5,400 lines. Replay: a fresh repository from `git archive` of the commit that worker started from, the plan file from the repository, the issue body and the research note as scratch files, and the scope paraphrased from the original brief. Prompt: delegate В2, write the plan with briefs into a file, launch nothing. A first attempt in a `git worktree` of the original repository was discarded: the project's auto-memory carried the original run's lesson (600K, 92 min) and the shared refs exposed the finished branch.
+
+  | | Old skill | New skill |
+  | --- | --- | --- |
+  | Writers for В2 | 3: the first at about 1,100 lines with shell, orders tab, order sheet and the local stand | 6–7: prototype, stand, shell (about 700 lines), three tab workers (about 600–700 each), copy clean-up |
+  | Effort | `medium` everywhere | `high` for the two parts that debit and refund balance and for the money review |
+  | Browser checks | one Opus agent for the full state matrix and the functional scenarios | two Sonnet agents (state matrix; functional scenarios with saved state) |
+  | Quiet output, three-attempt stop, commit own paths, short report | absent | in a common block pasted into every brief |
+  | Worktree per parallel writer | yes, with absolute paths to the gitignored scratch notes | yes, but briefs point to `.scratch/...` relative paths that a worktree does not contain |
+  | Cost, time | $0.85, 172 s | $0.97, 203 s |
+
+  The skill loaded first in both runs. Neither wrote a ledger (the prompt asked for a plan file only). An earlier pair of runs with the contaminated setup gave the same pattern: new skill high effort on money parts and quiet-output rules, old skill all `medium`.
+- End-to-end run on a synthetic ticket set: a Python billing tool, four tickets in `.scratch/billing/issues/` (01 money, model and store blocks 02 invoicing and 03 CSV import; 04 command line is blocked by 02 and 03), 13 hidden acceptance tests kept outside the project. Prompt: "Implement the tickets in .scratch/billing/issues using subagents."
+  - The skill loaded first; the ledger `docs/tasks/billing.md` held the assignment map, model and effort, tokens per agent, rulings, a follow-up list and a handoff; each ticket file got one status line.
+  - Launches: four implementers, one per ticket (01 alone; 02 and 03 together in separate worktrees; 04 in a worktree alongside the review), Opus 5.5 `high` for 01 and 02, `medium` for 03 and 04; review of 01–03 on Opus 5.5 `high`; one fix round on Sonnet 5.5 `medium`; two re-reviews on Opus 5.5 `high`. Every launch set model and effort explicitly. Implementer briefs carried log-to-file, the three-attempt stop, commit-own-paths, no push or stash, and a short report; review briefs carried claims to verify and risks with checks.
+  - Children peaked at 47–78K context, implementers wrote 370–990 lines each; the coordinator peaked at 106K. Nested agents had shell access in this setup.
+  - Result: 13 of 13 hidden tests, 131 own tests, about 2,690 added lines. 21 min wall time, $6.80 (Opus $6.54, Sonnet $0.26, Haiku none).
+  - Review loop: the review brief asked for hostile input on every parser, including NaN, `1e400` and huge exponents in the operator's own JSON files. The coordinator rated seven such crashes blocking, the fix round introduced a regression, and two re-reviews followed, the second on the coordinator's own few-line fix. Reviews and fixes took about half of the children's tokens and added input limits that no ticket asked for (store module 386 lines).
+- Small task: a total row per currency in the summary CSV of the same tool, skill not named. The coordinator did it itself in 17 s for $0.26 with a 9-line diff and a test; the skill did not load.
+- Limitations: one run per cell; the sizing replay stopped at planning, so the plan's actual peaks and quality were not measured; the end-to-end task was small enough that a solo run might have been cheaper, and no solo baseline was run.
+- Not verified: launching the planned В2 waves; the handoff after every second wave in a long session; cutting assignments after a worker over 300K; research fan-out; everything listed as not verified in the earlier records.
+- Fixes after these runs: absolute paths for ignored and uncommitted files in worktree briefs; items far under budget merged along a blocker chain; hostile-input checks limited to input from users and outside systems, with crashes on operator data as follow-up items; one re-review per findings list. Not re-run after these fixes.
+- Background research and the local transcript analysis behind the budget are summarized in the task file of this change.
+
 
 Run `python3 docs/check_package.py` from any directory. It checks the package files, the single discoverable entry point, the simple frontmatter and relative links. It does not prove that a model follows the instructions.
