@@ -27,7 +27,7 @@ Use the [Skills CLI](https://github.com/vercel-labs/skills), or copy `skills/del
 npx skills add tomastaker/delegate-kit
 ```
 
-The package holds `delegate-kit` and the five PR skills below; install the ones you use. `full-send` needs `delegate-kit`, `file-pr` and `babysit-pr`; `file-pr` and `babysit-pr` need `leaving-pr-comments`. The PR skills need an authenticated [GitHub CLI](https://cli.github.com), and `babysit-pr` needs `python3` for `pr-wait` outside T3 Code.
+The package holds `delegate-kit` and the five PR skills below; install the ones you use. `full-send` needs `delegate-kit`, `file-pr` and `babysit-pr`; `full-stop` needs `full-send`; `file-pr` and `babysit-pr` need `leaving-pr-comments`. The PR skills need an authenticated [GitHub CLI](https://cli.github.com), and `babysit-pr` needs `python3` for `pr-wait` outside T3 Code.
 
 The skill needs no runtime of its own. The models and tools it launches, and their authorization, must already be available in your environment.
 
