@@ -26,7 +26,7 @@ An assignment is within budget when it writes up to about 1,000 lines in 5–7 f
 
 Every agent pays a fixed orientation cost of about 25K tokens plus its brief, so more agents is not better. Before launching more than one, name what each extra agent buys; use the fewest that keep each within budget.
 
-The **risk areas** are money, security, access rights, the data model and its migrations, and a stack or architecture choice that binds later work. Work in a risk area gets `high` effort, a second-family review and a larger round budget.
+The **risk areas** are money, security, access rights, the data model and its migrations, and a stack or architecture choice that binds later work. Work in a risk area gets `high` effort, a second-family review and a larger round budget; in doubt, treat work as in a risk area.
 
 ## Choose the mode
 
