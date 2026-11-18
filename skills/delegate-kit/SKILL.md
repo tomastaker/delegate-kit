@@ -26,7 +26,7 @@ An assignment is within budget when it writes up to about 1,000 lines in 5–7 f
 
 Every agent pays a fixed orientation cost of about 25K tokens plus its brief, so more agents is not better. Before launching more than one, name what each extra agent buys; use the fewest that keep each within budget.
 
-The **risk areas** are money, security, access rights, the data model and its migrations, and a stack or architecture choice that binds later work. Work in a risk area gets `high` effort, a second-family review and a larger round budget; in doubt, treat work as in a risk area.
+The **risk areas** are money, security, access rights, the data model and its migrations, and a stack or architecture choice that binds later work. Work in a risk area gets `high` effort and a second-family review; in doubt, treat work as in a risk area.
 
 ## Choose the mode
 
@@ -68,7 +68,7 @@ Keep the task's **ledger** in one file: the task checklist if the project has on
 
 When the harness reports a finished worker far over budget (about 300K or more), cut the remaining assignments smaller.
 
-Keep your own context small: wait for completion notifications, read reports rather than transcripts, and pass material by file path. After every second wave, and after any compaction of your own session, write a **handoff** into the ledger (done, next, open decisions) and offer the user to continue in a fresh thread from it.
+Keep your own context small: wait for completion notifications, read reports rather than transcripts, and pass material by file path. After every wave, write a **handoff** into the ledger (done, next, open decisions), so that a compaction or a fresh thread starts from it.
 
 ## Launch
 
@@ -111,6 +111,7 @@ Workers run the tests of the files they touch. You run the full test suite on th
 A large change, or one in a risk area, gets an independent review by an agent that did not write it. In plan execution, one review covers a wave's integrated diff; when that diff is larger than about two assignments, split the review by area. Findings follow the risk list in the brief, so write it with care. The review brief says the review is read-only (the reviewer edits, commits and launches nothing) and names:
 
 - what the change must do: the acceptance criteria, with the author's claims marked as claims to verify and the author's reasoning left out;
+- the product: who uses it, how many people, whether anyone hostile can reach it;
 - the risks, each with a concrete check: the scenarios that lose data, break the main flow or leak secrets, hostile input for every parser and regular expression that reads input from users or outside systems, migrations on data shaped like production;
 - what the author already verified, so the reviewer spends nothing on it.
 
@@ -118,15 +119,19 @@ The reviewer reads the diff, confirms findings with targeted runs and short scri
 
 A change in a risk area, and a wave's integrated diff, also gets a **second-family** reviewer: launched together with the first, with the same brief. Each works blind to the other's findings; you merge them. Two reviewers agreeing is not evidence; a confirming run is.
 
-After a stage users will see, a separate agent walks the changed screens in the browser as a user and reports what it saw.
+A stage users will see also gets a walk, launched with its first review: a separate agent goes through the main scenario and the changed screens in the browser as a user and reports what it saw.
 
-You assign severity; reviewers under-rate it. Blocking means data loss, a security defect, a broken main scenario, a regression, or a crash or hang on input users or outside systems can send; in doubt, blocking. Malformed data or config the operator controls is a follow-up item unless the ticket asks otherwise. Blocking findings are fixed before merge: a few lines you fix yourself, the rest a fresh agent fixes. The other findings go into one follow-up list, fixed in one pass.
+You assign severity against the product, whatever rating the reviewer gave: one family tends to under-rate, the other to call every finding blocking. **Blocking** means data loss, a security defect, a broken main scenario, a regression, or a crash or hang, in a scenario that use of this product reaches: ordinary use, or a rare but plausible action such as a double click, two tabs or a lost response. A scenario that needs contrived input or timing (a request the interface never sends, a race of milliseconds) is a follow-up item, and so is malformed data or config the operator controls. The exception is a risk area: silent loss or corruption of money or data there is blocking however rare.
+
+Blocking findings are fixed before merge: a few lines you fix yourself, the rest a fresh agent fixes, in a brief that carries blocking findings only, about five from one area at most. The other findings wait in one follow-up list, fixed in one pass after the last review round and accepted by reading the diff; an item that would add logic in a risk area stays in the list for the user.
 
 Keep the change at the size its goal needs: review loops grow a change one cheap-looking fix at a time. Fix the intended case; extra guards, tests, compatibility and small performance work go to the follow-up list with a one-line reason. Prefer the fix that deletes or narrows code.
 
-A fix round writes new code. When it adds logic or touches a risk area, one fresh reviewer, of the family that raised the findings it fixes (one of each when both did), checks its diff and those findings, scoped to that diff. Small fixes, including your own, you accept by reading the diff, and that closes their findings. The stop signal is the verdicts and the confirmed findings: stop when no blocking finding is open and the latest review approves, or when a round brings only items you rate as follow-ups. The budget is three rounds, five in a risk area while a blocking finding stays open with evidence; past it, settle what remains under Rulings.
+A fix round writes new code. When it adds logic or touches a risk area, one fresh second-family reviewer checks its diff and the findings it fixes, scoped to that diff, and the fix merges only after that check. Small fixes, including your own, you accept by reading the diff, and that closes their findings. The stop signal is the verdicts and the confirmed findings: stop when no blocking finding is open and the latest review approves, or when a round brings only items you rate as follow-ups.
 
-**Escalation.** After a failed attempt at the same assignment or finding, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, settle it under Rulings.
+The budget is two fix rounds per **component**: one mechanism or feature, such as a parser, a form's draft handling or a migration check. A blocking finding in a component after its second fix says its design is wrong, so the third move is to remove the feature, narrow it, or replace the mechanism with a simpler one. When none of these fits, leave the fix out and record the finding as a known limit in the ledger and the report. A move that changes what users meet, or a known limit in a risk area, is the user's decision under Rulings: ask with the options.
+
+**Escalation.** After a failed attempt at the same assignment, the next fresh agent gets one level more effort; after a second, a stronger model; after a third, settle it under Rulings. A component's second fix round runs one level of effort above its first.
 
 ## Report
 
